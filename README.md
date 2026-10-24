@@ -4,12 +4,23 @@
 
 这是 PCL 自定义主页的 Linux 服务端，用来替代 Windows 端的本地 `Hitokoto.ps1` 数据源：
 
+- 向 PCL 提供单文件联网主页 `Custom.xaml`（页面里已经写好一条一言）；
 - 向 PCL 提供完整句库下载；
 - 向 PCL 的“自定义 API”提供随机一言；
 - 可选地接收新句子（需要管理员 Token）。
 
 **固定端口：`13469`**（在 10000–65535 范围内随机选定）。
-服务只监听 `127.0.0.1:13469`，由同机 Nginx 反向代理到 `https://yiyan.overpass.top`。
+
+默认网络模型：
+
+- 应用：同时尝试监听 `127.0.0.1:13469` 和 `[::1]:13469`（IPv4 + IPv6 回环；主机没有 `::1` 时会跳过并继续）；
+- Nginx：公网 `80/443` 同时监听 IPv4 和 IPv6；
+- 公网 IPv4 需要域名 A 记录和本机 IPv4 地址，公网 IPv6 需要 AAAA 记录；
+- 如果服务器本身只有 IPv6（例如 xf1），IPv4 访问必须在前置代理 / 隧道上做，单靠本机无法凭空提供公网 IPv4。
+
+> 当前 xf1 的实际情况：有公网 IPv6，没有公网 IPv4，`lo` 上也没有 `::1`。因此应用只会成功绑定 `127.0.0.1`；证书修复后，Nginx 负责公网 IPv6 的 `80/443`；公网 IPv4 需要额外前置代理。应用日志出现 `[::1] ... Cannot assign requested address` 是预期行为。
+>
+> 另外，`yiyan.overpass.top` 目前仍解析到 `gz-1.overpass.top`，不是 xf1。把 A/AAAA 切到 xf1 之前，下面的公网 `curl` 和 PCL 更新链接都不会真正到达这台机器；本地 `http://127.0.0.1:13469/Custom.xaml` 不受影响。
 
 ---
 
@@ -18,6 +29,9 @@
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | `GET` | `/healthz` | 健康检查 |
+| `GET` | `/Custom.xaml` | 单文件 PCL 主页，服务端已把一条一言写入 XAML |
+| `GET` | `/Custom.xaml.ini` | 主页版本号；每次返回新时间戳，让 PCL 重新下载 |
+| `GET` | `/version` | 同 `/Custom.xaml.ini` |
 | `GET` | `/hitokoto.json` | 完整句库，给 PCL“下载完整句库”用 |
 | `GET` | `/api/quotes` | 同 `/hitokoto.json` |
 | `GET` | `/api/hitokoto` | 随机一句，给 PCL“自定义 API”用 |
@@ -65,6 +79,28 @@
 ```
 
 PCL 的 `Hitokoto.ps1` 支持 `quotes` 包装，字段 `text` / `source` / `author` / `type` / `id` 都能直接识别。
+
+### 1.1 单文件联网主页
+
+`/Custom.xaml` 返回的是**一个完整的 XAML 文件**，不是压缩包，也不依赖同目录的脚本：
+
+```text
+GET https://yiyan.overpass.top/Custom.xaml
+GET https://yiyan.overpass.top/Custom.xaml.ini
+```
+
+工作方式与 `pcl-homepage` 一类联网主页相同：
+
+1. PCL 先请求 `<更新链接>.ini`，拿到版本号；
+2. 版本变化时再请求 `Custom.xaml`；
+3. 服务端在返回前把当前一言、出处、作者、句库数量和生成时间写进 XAML；
+4. PCL 直接渲染这个文件，因此**不需要 PowerShell、VBS 或 `Hitokoto\` 文件夹**。
+
+`.ini` 每次请求都返回新的毫秒时间戳，所以 PCL 每次启动都会检查到新版本，并在后台重新下载主页。页面里的“换一句”按钮会触发 PCL 的“刷新主页”：PCL 清空 `CacheSavedPageUrl` / `CacheSavedPageVersion`，然后立即重新下载 `Custom.xaml`，因此会换一句；“刷新显示”只刷新当前页面，不会重新下载。
+
+这个单文件版只保留展示、复制和打开链接；本地搜索、自定义 API、完整句库下载仍在带 `Hitokoto.ps1` 的完整版中提供。
+
+模板位置：`templates/Custom.xaml`。模板是每次请求读取的，修改后下一次请求即可生效，不需要重启服务或重新生成静态文件。
 
 ---
 
@@ -128,10 +164,14 @@ sudo nano .env
 `.env` 示例：
 
 ```dotenv
-HITOKOTO_HOST=127.0.0.1
+# 逗号分隔；默认同时监听 IPv4 和 IPv6 回环
+HITOKOTO_HOST=127.0.0.1,::1
 HITOKOTO_PORT=13469
 HITOKOTO_DATA_FILE=/opt/hitokoto-server/data/quotes.json
 HITOKOTO_LOG_LEVEL=info
+
+# 单文件 Custom.xaml 里显示的站点地址，不要带结尾斜杠
+HITOKOTO_PUBLIC_BASE_URL=https://yiyan.overpass.top
 
 # 留空 = 禁用所有 POST 写入接口
 # 需要写入时生成一个长随机 Token：
@@ -143,11 +183,24 @@ HITOKOTO_ADMIN_TOKEN=
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `HITOKOTO_HOST` | `127.0.0.1` | 只监听本机回环地址 |
+| `HITOKOTO_HOST` | `127.0.0.1,::1` | 逗号分隔的绑定地址；默认 IPv4 + IPv6 回环 |
 | `HITOKOTO_PORT` | `13469` | 监听端口，代码会校验必须在 10000–65535 |
 | `HITOKOTO_DATA_FILE` | `data/quotes.json` | 句库文件；相对路径基于 `app.py` 所在目录 |
+| `HITOKOTO_PUBLIC_BASE_URL` | `https://yiyan.overpass.top` | 单文件 `Custom.xaml` 里显示的站点地址，不带结尾斜杠 |
 | `HITOKOTO_ADMIN_TOKEN` | 空 | 为空时 POST 接口返回 503 |
 | `HITOKOTO_LOG_LEVEL` | `info` | `critical/error/warning/info/debug/trace` |
+
+`HITOKOTO_HOST` 常用取值：
+
+| 值 | 监听范围 | 用途 |
+| --- | --- | --- |
+| `127.0.0.1,::1` | IPv4 + IPv6 回环 | 默认；同机 Nginx 反代，最安全 |
+| `127.0.0.1` | IPv4 回环 | 主机没有 IPv6 回环时 |
+| `::1` | IPv6 回环 | 仅 IPv6 回环 |
+| `::` | IPv4 + IPv6 通配 | 应用直接对外；必须配防火墙，不推荐 |
+| `0.0.0.0,::1` | IPv4 通配 + IPv6 回环 | 容器 / 特殊网络 |
+
+`::` 会被展开成 `0.0.0.0` 和 `::` 两个显式 socket，不依赖 `net.ipv6.bindv6only` 的取值。某个地址绑定失败只会记录 warning；至少成功一个才启动。
 
 ### 2.5 数据文件与权限
 
@@ -188,21 +241,38 @@ set +a
 .venv/bin/python app.py
 ```
 
-看到类似输出即表示监听成功：
+看到类似输出即表示监听成功（有 IPv6 回环时会多一行 `[::1]:13469`）：
 
 ```text
+INFO hitokoto listening on 127.0.0.1:13469
+INFO hitokoto listening on [::1]:13469
 INFO:     Uvicorn running on http://127.0.0.1:13469
 ```
 
 另开一个终端验证：
 
 ```bash
+# IPv4 回环
 curl -fsS http://127.0.0.1:13469/healthz
 curl -fsS http://127.0.0.1:13469/hitokoto.json | head -c 300
 curl -fsS http://127.0.0.1:13469/api/hitokoto
+curl -fsS http://127.0.0.1:13469/Custom.xaml | head -n 40
+curl -fsS http://127.0.0.1:13469/Custom.xaml.ini
+
+# IPv6 回环（主机有 ::1 时）
+curl -g -fsS 'http://[::1]:13469/healthz'
+
+# 查看实际绑定了哪些地址
+ss -lntp | grep 13469
 ```
 
-按 `Ctrl+C` 停止前台进程。
+如果日志出现：
+
+```text
+WARNING hitokoto cannot listen on [::1]:13469: [Errno 99] Cannot assign requested address
+```
+
+说明这台机器没有 IPv6 回环地址，IPv4 仍会正常启动；这不是致命错误。按 `Ctrl+C` 停止前台进程。
 
 ---
 
@@ -244,13 +314,14 @@ sudo systemctl reload nginx
 
 完整配置见 [nginx/yiyan.overpass.top.conf](nginx/yiyan.overpass.top.conf)，关键点是：
 
-- `upstream hitokoto_backend { server 127.0.0.1:13469; }`
+- `upstream hitokoto_backend { server 127.0.0.1:13469; }`；如果主机有 `::1`，可再加 `server [::1]:13469;` 做故障切换；
 - `server_name yiyan.overpass.top;`
-- `listen 443 ssl http2;`
+- 公网监听 `listen 80;` + `listen [::]:80 ipv6only=on;`；
+- 公网监听 `listen 443 ssl http2;` + `listen [::]:443 ssl http2 ipv6only=on;`；
 - 证书：
   - `/mnt/ssl/overpass.top/fullchain.pem`
   - `/mnt/ssl/overpass.top/privkey.pem`
-  - 证书路径沿用之前固定的目录；请确保证书 SAN 包含 `yiyan.overpass.top`，或使用 `*.overpass.top` 通配符证书。如果证书实际放在 `/mnt/ssl/yiyan.overpass.top/`，把两行 `ssl_*` 路径改成该目录。
+  - 同一张证书同时用于 IPv4 和 IPv6；请确保证书 SAN 包含 `yiyan.overpass.top`，或使用 `*.overpass.top` 通配符证书。如果证书实际放在 `/mnt/ssl/yiyan.overpass.top/`，把两行 `ssl_*` 路径改成该目录。
 - 80 端口 `301` 跳转到 HTTPS；
 - 代理头：`Host`、`X-Real-IP`、`X-Forwarded-For`、`X-Forwarded-Proto`。
 
@@ -259,11 +330,14 @@ sudo systemctl reload nginx
 ```nginx
 upstream hitokoto_backend {
     server 127.0.0.1:13469;
+    # 如果主机有 IPv6 回环，可取消下一行注释做双后端：
+    # server [::1]:13469;
     keepalive 16;
 }
 
 server {
     listen 80;
+    listen [::]:80 ipv6only=on;
     server_name yiyan.overpass.top;
 
     return 301 https://$host$request_uri;
@@ -271,6 +345,7 @@ server {
 
 server {
     listen 443 ssl http2;
+    listen [::]:443 ssl http2 ipv6only=on;
     server_name yiyan.overpass.top;
 
     ssl_certificate     /mnt/ssl/overpass.top/fullchain.pem;
@@ -306,7 +381,14 @@ server {
 ### 4.2 检查前置条件
 
 ```bash
-getent hosts yiyan.overpass.top
+# A / AAAA 都要看：IPv4 与 IPv6 各一条
+getent ahostsv4 yiyan.overpass.top
+getent ahostsv6 yiyan.overpass.top
+
+# 本机是否真的有公网 IPv4 / IPv6
+ip -brief addr
+
+# 证书
 sudo ls -l /mnt/ssl/overpass.top/fullchain.pem /mnt/ssl/overpass.top/privkey.pem
 ```
 
@@ -324,9 +406,24 @@ openssl x509 -in /mnt/ssl/overpass.top/fullchain.pem -noout -text \
 ```bash
 sudo nginx -t
 sudo systemctl reload nginx
-curl -I https://yiyan.overpass.top/healthz
-curl -fsS https://yiyan.overpass.top/hitokoto.json | head -c 300
+
+# Nginx 是否同时监听 IPv4 / IPv6
+sudo ss -lntp | grep -E ':(80|443)\b'
+
+# IPv4 与 IPv6 分别请求
+curl -4 -I https://yiyan.overpass.top/healthz
+curl -6 -I https://yiyan.overpass.top/healthz
+curl -4 -fsS https://yiyan.overpass.top/hitokoto.json | head -c 300
+curl -6 -fsS https://yiyan.overpass.top/hitokoto.json | head -c 300
+curl -4 -fsS https://yiyan.overpass.top/Custom.xaml | head -n 20
+curl -6 -fsS https://yiyan.overpass.top/Custom.xaml | head -n 20
 ```
+
+如果其中一族的 `curl` 失败：
+
+- 先看 `getent ahostsv4` / `ahostsv6` 是否有记录；
+- 再看 `ip -brief addr` 是否有对应公网地址；
+- 只有 IPv6 的机器（如 xf1）需要前置 IPv4 代理 / 隧道，不能只靠本机 Nginx 提供 IPv4。
 
 如果 502，检查应用是否真的在 13469 上监听：
 
@@ -341,8 +438,11 @@ sudo systemctl status hitokoto --no-pager
 
 | PCL 位置 | 填写内容 |
 | --- | --- |
+| “主页” → 联网下载 / 更新链接 | `https://yiyan.overpass.top/Custom.xaml` |
 | “API 设置” → 自定义 API | `https://yiyan.overpass.top/api/hitokoto` |
 | “句库下载” → 句库地址 | `https://yiyan.overpass.top/hitokoto.json` |
+
+更新链接只填单个 `Custom.xaml`；PCL 会自动请求 `Custom.xaml.ini` 检查版本，不需要另填版本地址。
 
 PCL 会在 API 地址后自动追加 `encode=json` 和 `charset=utf-8`；服务端会忽略这些额外查询参数，不影响返回。
 
@@ -420,17 +520,29 @@ curl -fsS -X POST https://yiyan.overpass.top/api/quotes/bulk \
 
 ## 7. 端口与防火墙
 
-应用只监听回环地址，不需要对公网开放 13469：
+默认应用只监听回环地址（`127.0.0.1`，有 `::1` 时再加 `::1`），不需要对公网开放 13469。Nginx 在同一台机器上通过 `127.0.0.1` 通信，公网只开 80/443：
 
 ```bash
-# 只开放 Nginx 的 80/443
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
+# 只开放 Nginx 的 80/443（IPv4 与 IPv6 都放行）
+sudo ufw allow 80/tcp comment 'nginx http'
+sudo ufw allow 443/tcp comment 'nginx https'
+
+# 如果使用 nftables / iptables，确认 ip 和 ip6 表都放行 80/443
+sudo nft list ruleset | grep -E '80|443' || true
 ```
 
-不要开放 `13469`。Nginx 和本服务在同一台机器上，通过 `127.0.0.1` 通信。
+确认 UFW 开启了 IPv6，否则上面的规则只对 IPv4 生效：
 
-如果 Nginx 在容器/另一台机器里，才需要把 `HITOKOTO_HOST` 改成 `0.0.0.0` 并配置防火墙；当前同机部署没有这个必要，也不建议直接暴露应用端口。
+```bash
+grep '^IPV6=' /etc/default/ufw
+sudo ufw status verbose
+```
+
+不要开放 `13469`。同机 Nginx 用 `127.0.0.1` 回源；如果主机有 `::1`，也可以在 upstream 里加 `[::1]:13469` 做双后端。
+
+如果 Nginx 在容器/另一台机器里，才需要把 `HITOKOTO_HOST` 改成 `0.0.0.0`（仅 IPv4）或 `::`（IPv4 + IPv6 通配），并配置防火墙。`::` 会让应用直接监听所有 IPv6 地址，**不推荐**在没有防火墙的情况下使用。
+
+只有 IPv6 的服务器（例如 xf1）无法仅靠本机提供公网 IPv4；需要前置 IPv4 代理、CDN 或隧道。
 
 ---
 
@@ -457,7 +569,8 @@ sudo ss -lntp | grep 13469
 
 - 应用没启动：`sudo systemctl status hitokoto`；
 - 端口不一致：`.env` 的 `HITOKOTO_PORT` 与 Nginx `server 127.0.0.1:13469` 必须相同；
-- 应用只监听 `127.0.0.1`，Nginx 也必须在同一台机器；
+- 应用必须至少监听 `127.0.0.1`（Nginx 默认回源地址）；如果 upstream 用了 `[::1]:13469`，主机必须有 `::1` 且应用监听成功；
+- Nginx 与 `app.py` 要在同一台机器，或显式改成可访问的地址；
 - 查看 Nginx 错误日志：
 
 ```bash
@@ -483,7 +596,35 @@ sudo nginx -T | grep -n "yiyan.overpass.top\|13469"
 - `503`：`.env` 里的 `HITOKOTO_ADMIN_TOKEN` 为空，写入接口被禁用；
 - `401`：Token 不匹配，检查 `Authorization: Bearer ...` 或 `X-Admin-Token`。
 
-### 8.5 句库为空或没有更新
+### 8.5 `nginx -t` 报 `key values mismatch`
+
+```text
+SSL_CTX_use_PrivateKey("/mnt/ssl/overpass.top/privkey.pem") failed
+(SSL: error:05800074:x509 certificate routines::key values mismatch)
+```
+
+这不是 IPv4/IPv6 配置问题，而是证书和私钥不是一对。Nginx 会拒绝启动，双栈监听也就无从生效。处理方式：
+
+```bash
+# 只比较公钥指纹，不输出私钥内容
+openssl x509 -in /mnt/ssl/overpass.top/fullchain.pem -pubkey -noout \
+  | openssl pkey -pubin -outform der | sha256sum
+openssl pkey -in /mnt/ssl/overpass.top/privkey.pem -pubout -outform der \
+  | sha256sum
+```
+
+两个 SHA-256 必须一致。不一致时：
+
+- 找回与当前证书匹配的私钥；或
+- 用 Certbot / acme.sh 重新签发 `*.overpass.top`（DNS-01），让 `fullchain.pem` 和 `privkey.pem` 成对更新；然后：
+
+```bash
+sudo nginx -t && sudo systemctl restart nginx
+```
+
+证书问题和 DNS 解析问题是两个独立问题：证书修好后，还要确认 `yiyan.overpass.top` 的 A/AAAA 记录指向这台机器。
+
+### 8.6 句库为空或没有更新
 
 ```bash
 curl -fsS https://yiyan.overpass.top/hitokoto.json | python3 -m json.tool | head -n 20
@@ -497,6 +638,8 @@ curl -fsS https://yiyan.overpass.top/hitokoto.json | python3 -m json.tool | head
 
 ```text
 app.py                       FastAPI 服务
+homepage.py                  单文件主页渲染（XML 转义、占位符替换）
+templates/Custom.xaml        单文件主页模板
 requirements.txt             Python 依赖
 .env.example                 环境变量模板
 data/quotes.json             官方句库（10526 条）
@@ -517,6 +660,7 @@ README.md                    本文件
 - 句库全量加载进内存；当前 10526 条约 3.3 MB，建议控制在几万条以内。
 - 写入接口没有分页/审核/验证码，公网部署时务必设置强 Token，或保持 `HITOKOTO_ADMIN_TOKEN` 为空只读。
 - 本服务不包含 TLS 终止，TLS 由 Nginx 负责。
+- `/mnt/ssl/config.ini` 可能保存 DNS API / ACME 凭据，权限应为 `600`，并定期轮换；不要把该文件提交到仓库或发到聊天里。
 - 句库来自 [hitokoto-osc/sentences-bundle](https://github.com/hitokoto-osc/sentences-bundle)，按 **AGPL-3.0** 使用；详见 [data/README.md](data/README.md)。
 
 ---

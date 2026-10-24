@@ -1,0 +1,165 @@
+<!--
+    PCL 一言主页 · 单文件联网版
+    ==================================================================
+    这个 XAML 由服务端在每次请求时生成：一言正文、出处、作者、句库
+    数量和生成时间已经写入页面，PCL 只需要下载 Custom.xaml 一个文件，
+    不再依赖 PowerShell、VBS 或本地 Hitokoto 文件夹。
+
+    更新链接（PCL 会同时请求 Custom.xaml.ini 检查版本）：
+      https://yiyan.overpass.top/Custom.xaml
+-->
+
+<StackPanel.Resources>
+    <Style x:Key="HitokotoQuoteText" TargetType="TextBlock">
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="LineHeight" Value="30" />
+    </Style>
+</StackPanel.Resources>
+
+<local:MyCard Title="一言 · Hitokoto" Margin="0,0,0,15">
+    <StackPanel Margin="25,40,23,15">
+        <TextBlock x:Name="QuoteText"
+                   FontSize="19"
+                   Margin="0,0,0,8"
+                   Foreground="{DynamicResource ColorBrush1}"
+                   Style="{StaticResource HitokotoQuoteText}">
+            <TextBlock.Text>__QUOTE__</TextBlock.Text>
+        </TextBlock>
+
+        <TextBlock FontSize="13"
+                   Margin="0,0,0,4"
+                   Foreground="#666666">
+            <TextBlock.Text>__META__</TextBlock.Text>
+        </TextBlock>
+
+        <TextBlock FontSize="12"
+                   Margin="0,0,0,2"
+                   Foreground="{DynamicResource ColorBrush2}">
+            <TextBlock.Text>__STATUS__</TextBlock.Text>
+        </TextBlock>
+
+        <TextBlock FontSize="11"
+                   Margin="0,0,0,10"
+                   Foreground="#888888"
+                   TextWrapping="Wrap">
+            <TextBlock.Text>__INFO__</TextBlock.Text>
+        </TextBlock>
+
+        <WrapPanel Margin="0,4,0,0">
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="18,0,18,0"
+                            ColorType="Highlight"
+                            Text="换一句"
+                            ToolTip="PCL 会清空主页缓存并重新下载 Custom.xaml，服务端会返回新的一句。"
+                            EventType="刷新主页" />
+
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="16,0,16,0"
+                            Text="复制这句话"
+                            ToolTip="把当前显示的一言复制到剪贴板"
+                            EventType="复制文本"
+                            EventData="{Binding Text, ElementName=QuoteText}" />
+
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="16,0,16,0"
+                            Text="刷新显示"
+                            ToolTip="只重新读取当前页面，不会重新下载；要换一句请点“换一句”。"
+                            EventType="刷新页面" />
+
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="16,0,16,0"
+                            Text="打开一言 API"
+                            ToolTip="在浏览器中打开 https://v1.hitokoto.cn/"
+                            EventType="打开网页"
+                            EventData="https://v1.hitokoto.cn/" />
+        </WrapPanel>
+
+        <TextBlock FontSize="11"
+                   Margin="0,4,0,0"
+                   Foreground="#999999"
+                   TextWrapping="Wrap"
+                   Text="单文件版由服务端动态生成，不再执行本地脚本，也不会写入注册表或创建启动项。断网时 PCL 会保留上一次成功下载的页面。" />
+    </StackPanel>
+</local:MyCard>
+
+<local:MyCard Title="关于这个单文件版" Margin="0,0,0,15" CanSwap="False" IsSwapped="False">
+    <StackPanel Margin="25,40,23,15">
+        <TextBlock FontSize="16" FontWeight="Bold" Text="一言 · Hitokoto（单文件联网版）" />
+        <TextBlock FontSize="13"
+                   Foreground="{DynamicResource ColorBrush2}"
+                   Margin="0,3,0,8"
+                   Text="由 DeepSeek 辅助制作" />
+
+        <TextBlock FontSize="12.5"
+                   Foreground="#555555"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,10"
+                   Text="页面内容由 yiyan.overpass.top 服务端生成：每次 PCL 重新下载 Custom.xaml 时，服务端会从在线句库中取一条一言并写入 XAML。PCL 只需要一个文件，不需要 PowerShell、VBS 或额外文件夹。" />
+
+        <local:MyHint Theme="Blue"
+                      Margin="0,0,0,10"
+                      Text="想使用本地搜索、自定义 API、完整句库下载？请使用带 PowerShell 助手的完整版；这个单文件版只保留展示、复制和打开链接。" />
+
+        <WrapPanel Margin="0,0,0,4">
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="14,0,14,0"
+                            ColorType="Highlight"
+                            Text="打开 项目仓库"
+                            ToolTip="在浏览器中打开客户端仓库"
+                            EventType="打开网页"
+                            EventData="https://github.com/shoot128/PCL-Hitokoto-client" />
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="14,0,14,0"
+                            Text="打开 服务端仓库"
+                            ToolTip="在浏览器中打开服务端仓库"
+                            EventType="打开网页"
+                            EventData="https://github.com/shoot128/PCL-Hitokoto-server" />
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="14,0,14,0"
+                            Text="打开 作者B站空间"
+                            ToolTip="在浏览器中打开作者 B 站空间"
+                            EventType="打开网页"
+                            EventData="https://space.bilibili.com/3493257902295506" />
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="14,0,14,0"
+                            Text="打开 hitokoto.cn"
+                            ToolTip="在浏览器中打开 hitokoto.cn"
+                            EventType="打开网页"
+                            EventData="https://hitokoto.cn/" />
+        </WrapPanel>
+
+        <TextBlock FontSize="11"
+                   Foreground="#999999"
+                   Margin="0,2,0,0"
+                   TextWrapping="Wrap">
+            <TextBlock.Text>当前页面由 __BASE_URL__ 生成；一言正文版权归原作者所有。更新链接：__BASE_URL__/Custom.xaml</TextBlock.Text>
+        </TextBlock>
+    </StackPanel>
+</local:MyCard>
+
+<local:MyCard Title="使用说明与已知限制" Margin="0,0,0,0" CanSwap="True" IsSwapped="True">
+    <StackPanel Margin="25,40,23,15">
+        <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
+                   Text="1. 在 PCL 的“主页 → 联网下载”中填写更新链接：__BASE_URL__/Custom.xaml。PCL 会请求同目录的 Custom.xaml.ini 判断是否需要更新，然后只下载 Custom.xaml 这一个文件。" />
+        <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
+                   Text="2. 每次启动 PCL 都会重新检查版本；服务端每次返回新的时间戳，因此会重新下载并换一句。页面里的“换一句”会触发 PCL 的“刷新主页”，清空缓存后重新下载 Custom.xaml，也会换一句。" />
+        <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
+                   Text="3. 断网或服务端暂时不可用时，PCL 会显示上一次成功下载的 XAML；不会因为网络失败而白屏。" />
+        <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
+                   Text="4. 这个版本不需要管理员权限，不执行本地命令，不读写注册表，不创建服务、计划任务或开机启动项。" />
+        <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
+                   Text="5. 单文件版不支持本地搜索、自定义 API 和完整句库下载；这些功能在带 Hitokoto.ps1 / HitokotoRun.vbs 的完整版中提供。" />
+        <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
+                   Text="6. 本页按 PCL 2.99 快照版与 PCL CE 的联网主页机制编写；如果 PCL 版本过旧，可能不支持部分控件。" />
+        <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,0"
+                   Text="7. 一言正文版权归原作者所有；本主页仅用于学习与个人使用。" />
+    </StackPanel>
+</local:MyCard>

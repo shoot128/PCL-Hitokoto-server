@@ -4,36 +4,69 @@
 This service is the server counterpart of the PCL custom homepage:
 
   GET  /healthz          health check
+  GET  /Custom.xaml      single-file PCL homepage with one quote baked in
+  GET  /Custom.xaml.ini  homepage version check for PCL
   GET  /hitokoto.json    full library; use it as PCL "下载完整句库" URL
   GET  /api/quotes       same data as /hitokoto.json
   GET  /api/hitokoto     one random quote; use it as PCL "自定义 API" URL
   POST /api/quotes       add one quote (requires admin token)
   POST /api/quotes/bulk  add many quotes (requires admin token)
 
-The process is intended to listen on 127.0.0.1 and be exposed by Nginx.
+The process is intended to listen on loopback (IPv4 and IPv6) and be
+exposed by Nginx. Set HITOKOTO_HOST to a comma-separated list such as
+``127.0.0.1,::1`` for dual-stack loopback, or ``::`` for dual-stack wildcard.
 Only a single process/worker should write the JSON file.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import secrets
+import socket
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, status
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi import FastAPI, Header, HTTPException, Query, status
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field, field_validator
+
+import homepage as homepage_xaml
 
 BASE_DIR = Path(__file__).resolve().parent
 
-HOST = (os.getenv("HITOKOTO_HOST", "127.0.0.1").strip() or "127.0.0.1")
+def _parse_hosts(raw: str) -> list[str]:
+    """Parse a comma-separated bind list; ``::`` means dual-stack wildcard."""
+    hosts: list[str] = []
+    for part in raw.split(","):
+        host = part.strip()
+        if not host:
+            continue
+        if host.startswith("[") and host.endswith("]"):
+            host = host[1:-1]
+        # Bind two explicit wildcard sockets instead of relying on the OS
+        # bindv6only setting. This works even when net.ipv6.bindv6only=1.
+        expanded = ("0.0.0.0", "::") if host == "::" else (host,)
+        for item in expanded:
+            if item not in hosts:
+                hosts.append(item)
+    # A wildcard already covers every address of the same family; keeping a
+    # more specific address would make the second bind fail with EADDRINUSE.
+    if "0.0.0.0" in hosts:
+        hosts = [host for host in hosts if host == "0.0.0.0" or ":" in host]
+    if "::" in hosts:
+        hosts = [host for host in hosts if host == "::" or ":" not in host]
+    return hosts or ["127.0.0.1", "::1"]
+
+
+HOSTS = _parse_hosts(os.getenv("HITOKOTO_HOST", "127.0.0.1,::1"))
 try:
     PORT = int(os.getenv("HITOKOTO_PORT", "13469"))
 except ValueError as exc:
@@ -46,6 +79,10 @@ if LOG_LEVEL not in {"critical", "error", "warning", "info", "debug", "trace"}:
     LOG_LEVEL = "info"
 
 ADMIN_TOKEN = os.getenv("HITOKOTO_ADMIN_TOKEN", "").strip()
+HOME_BASE_URL = (
+    os.getenv("HITOKOTO_PUBLIC_BASE_URL", "https://yiyan.overpass.top").strip()
+    or "https://yiyan.overpass.top"
+).rstrip("/")
 
 
 def _resolve_data_file() -> Path:
@@ -62,6 +99,47 @@ QUOTES: list[dict[str, Any]] = []
 UPDATED_AT = ""
 
 logger = logging.getLogger("hitokoto")
+
+
+def _display_host(host: str) -> str:
+    return f"[{host}]" if ":" in host else host
+
+
+def _create_listen_socket(host: str, port: int) -> socket.socket:
+    """Create one listening socket for an IPv4 or IPv6 literal."""
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if family == socket.AF_INET6 and hasattr(socket, "IPV6_V6ONLY"):
+        # IPv4 is handled by its own wildcard socket when HITOKOTO_HOST=::.
+        sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+    try:
+        sock.bind((host, port))
+    except OSError:
+        sock.close()
+        raise
+    sock.listen(2048)
+    sock.set_inheritable(True)
+    return sock
+
+
+def _create_listen_sockets() -> list[socket.socket]:
+    sockets: list[socket.socket] = []
+    errors: list[str] = []
+    for host in HOSTS:
+        try:
+            sock = _create_listen_socket(host, PORT)
+        except OSError as exc:
+            errors.append(f"{_display_host(host)}: {exc}")
+            logger.warning(
+                "cannot listen on %s:%d: %s", _display_host(host), PORT, exc
+            )
+            continue
+        sockets.append(sock)
+        logger.info("listening on %s:%d", _display_host(host), PORT)
+    if not sockets:
+        raise SystemExit("could not bind any listen address: " + "; ".join(errors))
+    return sockets
 
 
 def _now() -> str:
@@ -240,6 +318,23 @@ def _add_one_locked(payload: QuoteIn) -> tuple[dict[str, Any] | None, str | None
     return quote, None
 
 
+def _homepage_quote(seed: str) -> dict[str, Any] | None:
+    """Pick one quote for the single-file homepage.
+
+    Without a seed each request gets a random quote. A seed (for example a
+    timestamp supplied by PCL) makes the result stable for that seed.
+    """
+
+    with LOCK:
+        if not QUOTES:
+            return None
+        if not seed:
+            return dict(secrets.choice(QUOTES))
+        digest = hashlib.sha256(seed.encode("utf-8")).digest()
+        index = int.from_bytes(digest[:8], "big") % len(QUOTES)
+        return dict(QUOTES[index])
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     _load_library()
@@ -252,11 +347,18 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="PCL Hitokoto Library",
-    version="1.0.0",
+    version="1.1.0",
     docs_url=None,
     redoc_url=None,
     lifespan=lifespan,
 )
+
+NO_STORE_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+    "X-Content-Type-Options": "nosniff",
+}
 
 
 class QuoteIn(BaseModel):
@@ -282,6 +384,51 @@ def healthz() -> str:
     return f"ok\nquotes={count}\n"
 
 
+@app.get("/Custom.xaml")
+def custom_xaml(seed: str = Query(default="", max_length=200)) -> Response:
+    """Single-file homepage consumed by PCL's online homepage updater."""
+
+    quote = _homepage_quote(seed.strip())
+    if quote is None:
+        body = homepage_xaml.fallback_homepage(
+            "句库暂时为空",
+            "服务端还没有载入一言数据，请稍后点击“刷新主页”重试。",
+        )
+    else:
+        with LOCK:
+            count = len(QUOTES)
+        try:
+            body = homepage_xaml.render_homepage(
+                quote=quote,
+                count=count,
+                base_url=HOME_BASE_URL,
+            )
+        except Exception:
+            logger.exception("failed to render homepage XAML")
+            body = homepage_xaml.fallback_homepage()
+
+    return Response(
+        content=body,
+        media_type="application/xml",
+        headers={**NO_STORE_HEADERS, "Content-Type": "application/xml; charset=utf-8"},
+    )
+
+
+@app.get("/Custom.xaml.ini", response_class=PlainTextResponse)
+@app.get("/version", response_class=PlainTextResponse)
+def homepage_version() -> PlainTextResponse:
+    """Timestamp checked by PCL before downloading Custom.xaml.
+
+    Returning a new value on every request makes PCL download the homepage on
+    each launch, which is what gives the single-file edition a fresh quote.
+    """
+
+    return PlainTextResponse(
+        str(int(time.time() * 1000)),
+        headers=NO_STORE_HEADERS,
+    )
+
+
 @app.get("/")
 def index() -> dict[str, Any]:
     with LOCK:
@@ -291,6 +438,8 @@ def index() -> dict[str, Any]:
         "source": "https://github.com/hitokoto-osc/sentences-bundle",
         "license": "AGPL-3.0",
         "count": count,
+        "homepage": "/Custom.xaml",
+        "homepage_version": "/Custom.xaml.ini",
         "library": "/hitokoto.json",
         "random": "/api/hitokoto",
         "health": "/healthz",
@@ -414,13 +563,23 @@ if __name__ == "__main__":
         level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    logger.info("starting Hitokoto library service on http://%s:%d", HOST, PORT)
-    uvicorn.run(
+    sockets = _create_listen_sockets()
+    logger.info(
+        "starting Hitokoto library service on %s",
+        ", ".join(f"{_display_host(s.getsockname()[0])}:{s.getsockname()[1]}" for s in sockets),
+    )
+    config = uvicorn.Config(
         app,
-        host=HOST,
+        host=HOSTS[0],
         port=PORT,
         log_level=LOG_LEVEL,
         proxy_headers=True,
-        forwarded_allow_ips="127.0.0.1",
+        forwarded_allow_ips="127.0.0.1,::1",
         access_log=True,
     )
+    server = uvicorn.Server(config)
+    try:
+        server.run(sockets=sockets)
+    finally:
+        for sock in sockets:
+            sock.close()

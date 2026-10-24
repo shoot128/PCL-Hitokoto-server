@@ -1,0 +1,8 @@
+# 服务端运行数据
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+data/quotes.json.bak
+*.log

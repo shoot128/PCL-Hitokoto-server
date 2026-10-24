@@ -1,0 +1,80 @@
+{
+  "source": "https://github.com/hitokoto-osc/sentences-bundle",
+  "source_raw": "https://raw.githubusercontent.com/hitokoto-osc/sentences-bundle/master/",
+  "license": "AGPL-3.0",
+  "license_file": "LICENSE-AGPL-3.0.txt",
+  "bundleVersion": "1.0.1334",
+  "bundleUpdatedAt": 1792819158176,
+  "importedAt": "2026-10-24T06:47:14+00:00",
+  "count": 10526,
+  "duplicatesRemoved": 660,
+  "missingCreatedAt": 5,
+  "categories": {
+    "a": {
+      "name": "动画",
+      "count": 1492,
+      "added": 1457
+    },
+    "b": {
+      "name": "漫画",
+      "count": 111,
+      "added": 105
+    },
+    "c": {
+      "name": "游戏",
+      "count": 1180,
+      "added": 1160
+    },
+    "d": {
+      "name": "文学",
+      "count": 1979,
+      "added": 1942
+    },
+    "e": {
+      "name": "原创",
+      "count": 1486,
+      "added": 1482
+    },
+    "f": {
+      "name": "网络",
+      "count": 1553,
+      "added": 1392
+    },
+    "g": {
+      "name": "其他",
+      "count": 1902,
+      "added": 1545
+    },
+    "h": {
+      "name": "影视",
+      "count": 197,
+      "added": 196
+    },
+    "i": {
+      "name": "诗词",
+      "count": 753,
+      "added": 719
+    },
+    "j": {
+      "name": "网易云",
+      "count": 139,
+      "added": 139
+    },
+    "k": {
+      "name": "哲学",
+      "count": 307,
+      "added": 303
+    },
+    "l": {
+      "name": "抖机灵",
+      "count": 87,
+      "added": 86
+    }
+  },
+  "notes": [
+    "Derived from the official Hitokoto sentences-bundle.",
+    "Fields were renamed: hitokoto->text, from->source, from_who->author.",
+    "type was replaced with the Chinese category name; typeCode keeps the original key.",
+    "Items were de-duplicated by text (case-insensitive)."
+  ]
+}

@@ -1,0 +1,26 @@
+[Unit]
+Description=Hitokoto library HTTP service for PCL (yiyan.overpass.top)
+Documentation=file:/opt/hitokoto-server/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/hitokoto-server
+EnvironmentFile=/opt/hitokoto-server/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/hitokoto-server/.venv/bin/python /opt/hitokoto-server/app.py
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/hitokoto-server/data
+
+[Install]
+WantedBy=multi-user.target

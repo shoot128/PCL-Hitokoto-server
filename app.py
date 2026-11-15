@@ -93,6 +93,26 @@ HOME_BASE_URL = (
     or "https://yiyan.overpass.top"
 ).rstrip("/")
 
+# Hosts that may render their own origin into the generated search action.
+# The canonical domain and the current origin hostname are both accepted so
+# the page can be tested before the DNS CNAME is switched.
+_RENDER_HOSTS = frozenset({"yiyan.overpass.top", "xa-1.overpass.top"})
+
+
+def _request_base_url(request: Request) -> str:
+    """Return the scheme+host to embed in the page, with a safe fallback."""
+
+    host = request.headers.get("host", "").split(",")[0].strip().lower()
+    hostname = host.rsplit(":", 1)[0] if ":" in host and not host.startswith("[") else host
+    proto = (
+        request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    )
+    if proto not in {"http", "https"}:
+        proto = request.url.scheme
+    if hostname in _RENDER_HOSTS:
+        return f"{proto}://{hostname}"
+    return HOME_BASE_URL
+
 
 def _env_float(name: str, default: float) -> float:
     raw = os.getenv(name, str(default)).strip()
@@ -716,7 +736,7 @@ def custom_xaml(
             body = homepage_xaml.render_homepage(
                 quote=quote,
                 count=count,
-                base_url=HOME_BASE_URL,
+                base_url=_request_base_url(request),
                 query=query,
                 results=results,
             )

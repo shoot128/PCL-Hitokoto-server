@@ -7,9 +7,9 @@
 
     动态更新链接（PCL 会同时请求 Custom.xaml.ini 检查版本）：
       https://yiyan.overpass.top/Custom.xaml
-     PCL CE 不会替换网址里的花括号标记；页面搜索时由“修改设置”把本机
-     UiCustomNet 改成带 ?q= 的地址，再刷新下载。每个 PCL 各自保存自己的
-     地址，服务端不保存“上一个用户搜了什么”。
+     PCL CE 不会替换网址里的花括号标记；页面搜索时先由“搜索”按钮通过
+     “修改设置”把本机 UiCustomNet 改成带 ?q= 的地址，再点“刷新结果”
+     下载。每个 PCL 各自保存自己的地址，服务端不保存“上一个用户搜了什么”。
 -->
 
 <StackPanel.Resources>
@@ -84,11 +84,6 @@
                             EventData="https://v1.hitokoto.cn/" />
         </WrapPanel>
 
-        <TextBlock FontSize="11"
-                   Margin="0,4,0,0"
-                   Foreground="#999999"
-                   TextWrapping="Wrap"
-                   Text="单文件版不执行本地脚本，不创建服务或启动项；动态版搜索只通过 PCL 自带的“修改设置”改写本机的联网主页地址（UiCustomNet）。断网时 PCL 会保留上一次成功下载的页面。" />
     </StackPanel>
 </local:MyCard>
 
@@ -102,17 +97,7 @@ __SEARCH_CARD__
                    Margin="0,3,0,8"
                    Text="由 DeepSeek 辅助制作" />
 
-        <TextBlock FontSize="12.5"
-                   Foreground="#555555"
-                   TextWrapping="Wrap"
-                   Margin="0,0,0,10"
-                   Text="页面内容由服务端动态生成：每次 PCL 重新下载 Custom.xaml 时，服务端会从在线句库中取一条一言并写入 XAML。PCL 只需要一个文件，不需要 PowerShell、VBS 或额外文件夹。" />
-
-        <local:MyHint Theme="Blue"
-                      Margin="0,0,0,10"
-                      Text="搜索由服务端完成：输入关键词后，服务端检索句库并把结果写回本页。自定义 API 和完整句库下载仍由带 PowerShell 助手的完整版提供。" />
-
-        <WrapPanel Margin="0,0,0,4">
+        <WrapPanel Margin="0,6,0,4">
             <local:MyButton Margin="0,0,10,8"
                             Height="35"
                             Padding="14,0,14,0"
@@ -144,12 +129,6 @@ __SEARCH_CARD__
                             EventData="https://hitokoto.cn/" />
         </WrapPanel>
 
-        <TextBlock FontSize="11"
-                   Foreground="#999999"
-                   Margin="0,2,0,0"
-                   TextWrapping="Wrap">
-            <TextBlock.Text>当前页面由 __BASE_URL__ 生成；一言正文版权归原作者所有。更新链接：__BASE_URL__/Custom.xaml</TextBlock.Text>
-        </TextBlock>
     </StackPanel>
 </local:MyCard>
 
@@ -158,7 +137,7 @@ __SEARCH_CARD__
         <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
                    Text="1. 在 PCL 的“主页 → 联网下载”中填写更新链接：__BASE_URL__/Custom.xaml。PCL 会请求同目录的 Custom.xaml.ini 判断是否需要更新，然后只下载 Custom.xaml 这一个文件。" />
         <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
-                   Text="2. 动态版的“搜索”按钮会把本机 PCL 的联网主页地址改成 __BASE_URL__/Custom.xaml?q=关键词，再触发“刷新主页”。每个 PCL 各存各的地址，服务端按本次请求检索，不保存上一位用户的关键词；关键词里不要包含竖线 | 或井号 #。" />
+                   Text="2. 动态版先点“搜索”，把本机 PCL 的联网主页地址改成 __BASE_URL__/Custom.xaml?q=关键词；再点“刷新结果”下载。每个 PCL 各存各的地址，服务端按本次请求检索，不保存上一位用户的关键词；关键词里不要包含竖线 | 或井号 #。" />
         <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
                    Text="__REFRESH_USAGE__" />
         <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"

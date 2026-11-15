@@ -106,7 +106,7 @@ __SEARCH_CARD__
                    Foreground="#555555"
                    TextWrapping="Wrap"
                    Margin="0,0,0,10"
-                   Text="页面内容由 yiyan.overpass.top 服务端生成：每次 PCL 重新下载 Custom.xaml 时，服务端会从在线句库中取一条一言并写入 XAML。PCL 只需要一个文件，不需要 PowerShell、VBS 或额外文件夹。" />
+                   Text="页面内容由服务端动态生成：每次 PCL 重新下载 Custom.xaml 时，服务端会从在线句库中取一条一言并写入 XAML。PCL 只需要一个文件，不需要 PowerShell、VBS 或额外文件夹。" />
 
         <local:MyHint Theme="Blue"
                       Margin="0,0,0,10"

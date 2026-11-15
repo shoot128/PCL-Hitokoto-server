@@ -96,9 +96,12 @@ def _render_search_card() -> str:
     """Search card for the dynamic page.
 
     PCL CE does not substitute URL markers in the custom homepage address.
-    The search button therefore writes the per-user setting ``UiCustomNet``
-    to a full URL containing the query, then refreshes the homepage. The
-    setting is local to each PCL installation, so users do not share a query.
+    The search button writes the per-user setting ``UiCustomNet`` to a full
+    URL containing the query; a second button refreshes the homepage. PCL CE
+    2.15.1 ``CustomEvent.Data`` is a plain CLR property and cannot take a
+    Binding, so the dynamic value must live on ``MyButton.EventData`` (an
+    attached DependencyProperty). Collection events run before the button's
+    own event, so a one-click collection cannot set the URL before refreshing.
     """
 
     return """<local:MyCard Title="搜索一言库" Margin="0,0,0,15">
@@ -107,7 +110,7 @@ def _render_search_card() -> str:
                    Foreground="#555555"
                    TextWrapping="Wrap"
                    Margin="0,0,0,10"
-                   Text="输入关键词后点“搜索”。按钮会把搜索词写进本机 PCL 的联网主页设置（UiCustomNet），再刷新下载；服务端按本次请求检索句库并把结果写回页面。每个 PCL 各自保存自己的链接，互不覆盖。" />
+                   Text="输入关键词后点“搜索”，把搜索条件写进本机 PCL 的联网主页设置（UiCustomNet）；再点“刷新结果”下载。服务端按本次请求检索句库并把结果写回页面，每个 PCL 各自保存自己的链接，互不覆盖。" />
 
         <TextBox x:Name="SearchBox"
                  Height="34"
@@ -122,15 +125,15 @@ def _render_search_card() -> str:
                             Padding="18,0,18,0"
                             ColorType="Highlight"
                             Text="搜索"
+                            EventType="修改设置"
+                            EventData="{Binding Text, Source={x:Reference SearchBox}, StringFormat='UiCustomNet|__BASE_URL__/Custom.xaml?q={0}'}" />
+
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="18,0,18,0"
+                            Text="刷新结果"
                             EventType="刷新主页"
-                            EventData="-">
-                <local:CustomEventService.Events>
-                    <local:CustomEventCollection>
-                        <local:CustomEvent Type="修改设置"
-                                           Data="{Binding Text, Source={x:Reference SearchBox}, StringFormat='UiCustomNet|__BASE_URL__/Custom.xaml?q={0}|-'}" />
-                    </local:CustomEventCollection>
-                </local:CustomEventService.Events>
-            </local:MyButton>
+                            EventData="-" />
 
             <local:MyButton Margin="0,0,10,8"
                             Height="35"

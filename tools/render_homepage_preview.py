@@ -41,6 +41,7 @@ def main() -> int:
         quote=quote,
         count=len(quotes),
         base_url=args.base_url,
+        search_enabled=False,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(xaml, encoding="utf-8")

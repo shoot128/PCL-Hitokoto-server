@@ -5,6 +5,7 @@
 这是 PCL 自定义主页的 Linux 服务端，用来替代 Windows 端的本地 `Hitokoto.ps1` 数据源：
 
 - 向 PCL 提供单文件联网主页 `Custom.xaml`（页面里已经写好一条一言）；
+- 单文件主页支持按请求的服务端搜索（`q` 参数），不保存全局搜索状态；
 - 向 PCL 提供完整句库下载；
 - 向 PCL 的“自定义 API”提供随机一言；
 - 可选地接收新句子（需要管理员 Token）。
@@ -18,9 +19,11 @@
 - 公网 IPv4 需要域名 A 记录和本机 IPv4 地址，公网 IPv6 需要 AAAA 记录；
 - 如果服务器本身只有 IPv6（例如 xf1），IPv4 访问必须在前置代理 / 隧道上做，单靠本机无法凭空提供公网 IPv4。
 
-> 当前 xf1 的实际情况：有公网 IPv6，没有公网 IPv4，`lo` 上也没有 `::1`。因此应用只会成功绑定 `127.0.0.1`；证书修复后，Nginx 负责公网 IPv6 的 `80/443`；公网 IPv4 需要额外前置代理。应用日志出现 `[::1] ... Cannot assign requested address` 是预期行为。
+> 原 xf1 的实际情况（历史记录）：有公网 IPv6，没有公网 IPv4，`lo` 上也没有 `::1`。因此应用只会成功绑定 `127.0.0.1`；证书修复后，Nginx 负责公网 IPv6 的 `80/443`；公网 IPv4 需要额外前置代理。应用日志出现 `[::1] ... Cannot assign requested address` 是预期行为。
 >
-> 另外，`yiyan.overpass.top` 目前仍解析到 `gz-1.overpass.top`，不是 xf1。把 A/AAAA 切到 xf1 之前，下面的公网 `curl` 和 PCL 更新链接都不会真正到达这台机器；本地 `http://127.0.0.1:13469/Custom.xaml` 不受影响。
+> 当时，`yiyan.overpass.top` 还解析到 `gz-1.overpass.top`，不是 xf1。把 A/AAAA 切到 xf1 之前，下面的公网 `curl` 和 PCL 更新链接都不会真正到达这台机器；本地 `http://127.0.0.1:13469/Custom.xaml` 不受影响。
+
+> **2026-11-15 更新：原 xf1 演示服务器已下线（服务器已出售）**。下面的 xf1 监听、证书和 DNS 记录只作为部署历史参考；`yiyan.overpass.top` 的动态主页与服务端搜索需要换到新服务器重新部署后才能使用。代码不依赖 xf1，按第 2 节通用步骤部署到新机器即可。
 
 ---
 
@@ -29,7 +32,7 @@
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | `GET` | `/healthz` | 健康检查 |
-| `GET` | `/Custom.xaml` | 单文件 PCL 主页，服务端已把一条一言写入 XAML |
+| `GET` | `/Custom.xaml` | 单文件 PCL 主页，服务端已把一条一言写入 XAML；`q` 为本次搜索词，`u` 仅为旧链接兼容 |
 | `GET` | `/Custom.xaml.ini` | 主页版本号；每次返回新时间戳，让 PCL 重新下载 |
 | `GET` | `/version` | 同 `/Custom.xaml.ini` |
 | `GET` | `/hitokoto.json` | 完整句库，给 PCL“下载完整句库”用 |
@@ -62,8 +65,8 @@
   "name": "PCL Hitokoto Library",
   "source": "https://github.com/hitokoto-osc/sentences-bundle",
   "license": "AGPL-3.0",
-  "updatedAt": "2026-10-24T06:47:14+00:00",
-  "count": 10526,
+  "updatedAt": "2026-11-15T05:45:24+00:00",
+  "count": 10611,
   "quotes": [
     {
       "id": "9818ecda-9cbf-4f2a-9af8-8136ef39cfcd",
@@ -96,9 +99,15 @@ GET https://yiyan.overpass.top/Custom.xaml.ini
 3. 服务端在返回前把当前一言、出处、作者、句库数量和生成时间写进 XAML；
 4. PCL 直接渲染这个文件，因此**不需要 PowerShell、VBS 或 `Hitokoto\` 文件夹**。
 
-`.ini` 每次请求都返回新的毫秒时间戳，所以 PCL 每次启动都会检查到新版本，并在后台重新下载主页。页面里的“换一句”按钮会触发 PCL 的“刷新主页”：PCL 清空 `CacheSavedPageUrl` / `CacheSavedPageVersion`，然后立即重新下载 `Custom.xaml`，因此会换一句；“刷新显示”只刷新当前页面，不会重新下载。
+`.ini` 每次请求都返回新的毫秒时间戳，所以 PCL 每次启动都会检查到新版本，并在后台重新下载主页。页面里的“换一句”按钮会先把联网主页地址改回不带 `q` 的地址，再触发 PCL 的“刷新主页”，因此会回到随机一言；“刷新显示”只刷新当前页面，不会重新下载。
 
-这个单文件版只保留展示、复制和打开链接；本地搜索、自定义 API、完整句库下载仍在带 `Hitokoto.ps1` 的完整版中提供。
+这个单文件版支持**服务端搜索**：PCL CE 2.15.1 不会替换更新链接里的 `{identify}` / `{variable:...}` 标记，因此页面搜索框改用 PCL 2.99 / CE 都自带的“修改设置”事件，把本机的 `UiCustomNet` 改成 `Custom.xaml?q=关键词`，再触发“刷新主页”；服务端按本次请求检索句库，把结果直接渲染进返回的 XAML。搜索状态只存在于这一次请求和响应里，服务端不保存“上一位用户搜了什么”，每个 PCL 各自保存自己的地址（搜索后会保留带 `q` 的链接，直到点“换一句”或“清空搜索”恢复）；响应使用 `Cache-Control: private, no-store`，避免共享缓存把 A 用户的搜索结果发给 B 用户。本地搜索、自定义 API、完整句库下载仍在带 `Hitokoto.ps1` 的完整版中提供。
+
+```text
+GET /Custom.xaml?q=关键词
+```
+
+`q` 是本次搜索词，放在 URL 最后；服务端会从原始查询串读取它，因此关键词里的 `&` 不会被截断。关键词里不要包含竖线 `|`（PCL 设置事件用它分隔参数）或井号 `#`（会被当成 URL 片段）。`u` 仍可被服务端接受，但只是旧链接的兼容参数，只用于日志短哈希；当前页面不再生成它。
 
 模板位置：`templates/Custom.xaml`。模板是每次请求读取的，修改后下一次请求即可生效，不需要重启服务或重新生成静态文件。
 
@@ -170,6 +179,11 @@ HITOKOTO_PORT=13469
 HITOKOTO_DATA_FILE=/opt/hitokoto-server/data/quotes.json
 HITOKOTO_LOG_LEVEL=info
 
+# 官方句库自动刷新：默认每 8 小时一次；设为 0 关闭
+HITOKOTO_REFRESH_HOURS=8
+# 刷新失败后的重试间隔（秒，最小 60）
+HITOKOTO_REFRESH_RETRY_SECONDS=600
+
 # 单文件 Custom.xaml 里显示的站点地址，不要带结尾斜杠
 HITOKOTO_PUBLIC_BASE_URL=https://yiyan.overpass.top
 
@@ -186,6 +200,9 @@ HITOKOTO_ADMIN_TOKEN=
 | `HITOKOTO_HOST` | `127.0.0.1,::1` | 逗号分隔的绑定地址；默认 IPv4 + IPv6 回环 |
 | `HITOKOTO_PORT` | `13469` | 监听端口，代码会校验必须在 10000–65535 |
 | `HITOKOTO_DATA_FILE` | `data/quotes.json` | 句库文件；相对路径基于 `app.py` 所在目录 |
+| `HITOKOTO_REFRESH_HOURS` | `8` | 每多少小时自动重新下载官方句库；`0` 关闭；最小 1 分钟 |
+| `HITOKOTO_REFRESH_RETRY_SECONDS` | `600` | 自动刷新失败后的重试间隔；最小 60 秒 |
+| `HITOKOTO_BUNDLE_BASE` | 官方 raw 地址 | 可选，替换句库下载源；一般不需要改 |
 | `HITOKOTO_PUBLIC_BASE_URL` | `https://yiyan.overpass.top` | 单文件 `Custom.xaml` 里显示的站点地址，不带结尾斜杠 |
 | `HITOKOTO_ADMIN_TOKEN` | 空 | 为空时 POST 接口返回 503 |
 | `HITOKOTO_LOG_LEVEL` | `info` | `critical/error/warning/info/debug/trace` |
@@ -206,11 +223,23 @@ HITOKOTO_ADMIN_TOKEN=
 
 仓库自带 `data/quotes.json`，已替换为一言开源社区官方句库 [hitokoto-osc/sentences-bundle](https://github.com/hitokoto-osc/sentences-bundle) 的转换版本：
 
-- 当前 **10526** 条，约 3.3 MB；
-- 上游版本 `1.0.1334`，导入时间 `2026-10-24`；
+- 当前 **10611** 条，约 3.5 MB；
+- 上游版本 `1.0.1378`，最近导入时间 `2026-11-15`；
 - 保留 12 个分类：动画、漫画、游戏、文学、原创、网络、其他、影视、诗词、网易云、哲学、抖机灵；
 - 来源、字段转换和分类计数见 [data/README.md](data/README.md) 与 [data/SOURCE.json](data/SOURCE.json)；
 - 上游采用 **AGPL-3.0**，许可证原文在 [data/LICENSE-AGPL-3.0.txt](data/LICENSE-AGPL-3.0.txt)。
+
+### 2.5.1 自动刷新官方句库
+
+服务端进程默认每 **8 小时**重新下载一次官方 `sentences-bundle`，不需要额外的 cron 或 systemd timer。启动时如果 `data/quotes.json` 里的 `updatedAt` 已经超过 8 小时，会在约 60 秒后先刷新一次；否则等完剩余时间再刷新。下载和转换在后台线程执行，不会阻塞 `/Custom.xaml`、`/api/hitokoto` 等请求。
+
+- 成功后替换 `data/quotes.json`，并把旧文件备份为 `data/quotes.json.bak`，同时更新 `data/SOURCE.json` 和配置里的条数。
+- 通过 `POST /api/quotes` 添加的条目会保留。新条目带 `origin: "custom"`；旧数据里没有 `typeCode` 的条目也按本地条目保留。官方条目按文本去重，新官方库中已删除的旧官方条目会消失。
+- 下载、JSON 解析、条数校验或写文件失败时，**保留当前句库**，不会用空库或不完整数据覆盖；默认 600 秒后重试。
+- 只运行**一个**应用进程（当前 systemd 单元就是单进程）。自动刷新锁在进程内；如果改成多 worker，请改为外部定时器并设置 `HITOKOTO_REFRESH_HOURS=0`，避免多个进程同时写文件。
+- 需要关闭自动刷新时设 `HITOKOTO_REFRESH_HOURS=0`；需要立即手动刷新时仍可执行下面的命令，或重启服务后等首次检查。
+
+自动刷新使用官方 raw 地址；如需镜像，可设置 `HITOKOTO_BUNDLE_BASE`，但应确保镜像内容仍来自官方仓库。
 
 需要重新导入时，在服务端项目根目录执行：
 
@@ -632,17 +661,26 @@ curl -fsS https://yiyan.overpass.top/hitokoto.json | python3 -m json.tool | head
 
 检查 `data/quotes.json` 是否有 `quotes` 数组；服务启动时会把数组或 `quotes/data/results/items` 包装统一读入内存。
 
+自动刷新默认每 8 小时执行一次；如果启动时数据已过期，约 60 秒后先刷新。查看日志：
+
+```bash
+sudo journalctl -u hitokoto -n 100 --no-pager | grep -E 'library|refresh'
+```
+
+正常会看到 `library auto-refresh enabled` 和 `automatic library refresh complete`。失败时看 `automatic library refresh failed`；旧句库会保留，默认 600 秒后重试。也可以手动执行 `python3 tools/import_sentences_bundle.py`。
+
 ---
 
 ## 9. 文件说明
 
 ```text
-app.py                       FastAPI 服务
+app.py                       FastAPI 服务与 8 小时自动刷新调度
 homepage.py                  单文件主页渲染（XML 转义、占位符替换）
+library_source.py            官方句库下载/转换（服务与 CLI 共用）
 templates/Custom.xaml        单文件主页模板
 requirements.txt             Python 依赖
 .env.example                 环境变量模板
-data/quotes.json             官方句库（10526 条）
+data/quotes.json             官方句库（10611 条）
 data/SOURCE.json             来源、版本、分类计数
 data/LICENSE-AGPL-3.0.txt    上游 AGPL-3.0 许可证
 data/README.md               句库来源与转换说明
@@ -657,7 +695,7 @@ README.md                    本文件
 ## 10. 已知限制
 
 - 只支持单进程写入。不要用 `--workers` 多开，否则各进程的内存句库会不一致。
-- 句库全量加载进内存；当前 10526 条约 3.3 MB，建议控制在几万条以内。
+- 句库全量加载进内存；当前 10611 条约 3.5 MB，建议控制在几万条以内。
 - 写入接口没有分页/审核/验证码，公网部署时务必设置强 Token，或保持 `HITOKOTO_ADMIN_TOKEN` 为空只读。
 - 本服务不包含 TLS 终止，TLS 由 Nginx 负责。
 - `/mnt/ssl/config.ini` 可能保存 DNS API / ACME 凭据，权限应为 `600`，并定期轮换；不要把该文件提交到仓库或发到聊天里。

@@ -3,11 +3,12 @@
   "source_raw": "https://raw.githubusercontent.com/hitokoto-osc/sentences-bundle/master/",
   "license": "AGPL-3.0",
   "license_file": "LICENSE-AGPL-3.0.txt",
-  "bundleVersion": "1.0.1334",
-  "bundleUpdatedAt": 1792819158176,
-  "importedAt": "2026-10-24T06:47:14+00:00",
-  "count": 10526,
-  "duplicatesRemoved": 660,
+  "bundleVersion": "1.0.1378",
+  "bundleUpdatedAt": 1794661918779,
+  "importedAt": "2026-11-15T05:45:24+00:00",
+  "count": 10611,
+  "customCount": 0,
+  "duplicatesRemoved": 662,
   "missingCreatedAt": 5,
   "categories": {
     "a": {
@@ -22,38 +23,38 @@
     },
     "c": {
       "name": "游戏",
-      "count": 1180,
-      "added": 1160
+      "count": 1206,
+      "added": 1186
     },
     "d": {
       "name": "文学",
-      "count": 1979,
-      "added": 1942
+      "count": 2013,
+      "added": 1975
     },
     "e": {
       "name": "原创",
-      "count": 1486,
-      "added": 1482
+      "count": 1491,
+      "added": 1487
     },
     "f": {
       "name": "网络",
-      "count": 1553,
-      "added": 1392
+      "count": 1559,
+      "added": 1398
     },
     "g": {
       "name": "其他",
-      "count": 1902,
-      "added": 1545
+      "count": 1910,
+      "added": 1552
     },
     "h": {
       "name": "影视",
-      "count": 197,
-      "added": 196
+      "count": 198,
+      "added": 197
     },
     "i": {
       "name": "诗词",
-      "count": 753,
-      "added": 719
+      "count": 754,
+      "added": 720
     },
     "j": {
       "name": "网易云",
@@ -67,14 +68,15 @@
     },
     "l": {
       "name": "抖机灵",
-      "count": 87,
-      "added": 86
+      "count": 93,
+      "added": 92
     }
   },
   "notes": [
     "Derived from the official Hitokoto sentences-bundle.",
     "Fields were renamed: hitokoto->text, from->source, from_who->author.",
     "type was replaced with the Chinese category name; typeCode keeps the original key.",
-    "Items were de-duplicated by text (case-insensitive)."
+    "Items were de-duplicated by text (case-insensitive).",
+    "origin=official marks downloaded entries; origin=custom marks entries added through the admin API."
   ]
 }

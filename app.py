@@ -5,6 +5,7 @@ This service is the server counterpart of the PCL custom homepage:
 
   GET  /healthz          health check
   GET  /Custom.xaml      single-file PCL homepage with one quote baked in
+                         (``u`` is the PCL user id, ``q`` is a per-request search)
   GET  /Custom.xaml.ini  homepage version check for PCL
   GET  /hitokoto.json    full library; use it as PCL "下载完整句库" URL
   GET  /api/quotes       same data as /hitokoto.json
@@ -15,30 +16,38 @@ This service is the server counterpart of the PCL custom homepage:
 The process is intended to listen on loopback (IPv4 and IPv6) and be
 exposed by Nginx. Set HITOKOTO_HOST to a comma-separated list such as
 ``127.0.0.1,::1`` for dual-stack loopback, or ``::`` for dual-stack wildcard.
+The official sentence bundle is refreshed in-process every 8 hours by
+default; failures keep the current library and retry later.
 Only a single process/worker should write the JSON file.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import html
 import json
 import logging
+import math
 import os
 import secrets
+import shutil
 import socket
 import threading
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
-from fastapi import FastAPI, Header, HTTPException, Query, status
+from fastapi import FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
 import homepage as homepage_xaml
+import library_source
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -83,6 +92,45 @@ HOME_BASE_URL = (
     os.getenv("HITOKOTO_PUBLIC_BASE_URL", "https://yiyan.overpass.top").strip()
     or "https://yiyan.overpass.top"
 ).rstrip("/")
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise SystemExit(f"{name} must be a number") from exc
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise SystemExit(f"{name} must be an integer") from exc
+
+
+# Download the official bundle every 8 hours by default. Set to 0 to disable
+# the in-process scheduler (for example when an external timer runs the CLI).
+REFRESH_HOURS = _env_float("HITOKOTO_REFRESH_HOURS", 8.0)
+if not math.isfinite(REFRESH_HOURS):
+    raise SystemExit("HITOKOTO_REFRESH_HOURS must be finite")
+if REFRESH_HOURS < 0:
+    raise SystemExit("HITOKOTO_REFRESH_HOURS must be >= 0")
+if 0 < REFRESH_HOURS < 1 / 60:
+    raise SystemExit("HITOKOTO_REFRESH_HOURS must be 0 or at least 1 minute")
+REFRESH_INTERVAL_SECONDS = int(round(REFRESH_HOURS * 3600))
+REFRESH_RETRY_SECONDS = max(60, _env_int("HITOKOTO_REFRESH_RETRY_SECONDS", 600))
+MIN_REFRESH_QUOTES = 100
+
+BUNDLE_BASE_URL = (
+    os.getenv("HITOKOTO_BUNDLE_BASE", library_source.DEFAULT_BASE_URL).strip()
+    or library_source.DEFAULT_BASE_URL
+).rstrip("/") + "/"
+if not BUNDLE_BASE_URL.startswith(("https://", "http://")):
+    raise SystemExit("HITOKOTO_BUNDLE_BASE must be an http(s) URL")
+
+LIBRARY_REFRESH_LOCK = threading.Lock()
 
 
 def _resolve_data_file() -> Path:
@@ -229,12 +277,18 @@ def _load_library() -> None:
 
     if not DATA_FILE.exists():
         QUOTES = []
-        UPDATED_AT = _now()
+        UPDATED_AT = ""
         logger.warning("data file does not exist yet: %s", DATA_FILE)
         return
 
-    raw = json.loads(DATA_FILE.read_text(encoding="utf-8-sig"))
-    items = _extract_items(raw)
+    try:
+        raw = json.loads(DATA_FILE.read_text(encoding="utf-8-sig"))
+        items = _extract_items(raw)
+    except (OSError, ValueError):
+        logger.exception("could not read %s; starting with an empty library", DATA_FILE)
+        QUOTES = []
+        UPDATED_AT = ""
+        return
 
     seen: set[str] = set()
     quotes: list[dict[str, Any]] = []
@@ -251,7 +305,9 @@ def _load_library() -> None:
         quotes.append(quote)
 
     QUOTES = quotes
-    if isinstance(raw, dict):
+    if not quotes:
+        UPDATED_AT = ""
+    elif isinstance(raw, dict):
         UPDATED_AT = _clean(raw.get("updatedAt"), 100) or _now()
     else:
         UPDATED_AT = _now()
@@ -283,6 +339,162 @@ def _write_library_locked() -> None:
     os.replace(temp_file, DATA_FILE)
 
 
+def _is_custom_quote(quote: dict[str, Any]) -> bool:
+    """Return True for a quote that must survive an official-bundle refresh.
+
+    New admin entries carry ``origin=custom``. Older data predates that marker;
+    the official importer is the only writer that sets ``typeCode``, so an
+    entry without ``typeCode`` is treated as a local addition too.
+    """
+
+    return quote.get("origin") == "custom" or not str(quote.get("typeCode") or "").strip()
+
+
+def _refresh_library() -> dict[str, Any]:
+    """Download the official bundle and atomically replace the live library.
+
+    Network I/O happens before ``LOCK`` is taken. The old library stays intact
+    if the download, validation, or write fails. Custom quotes are merged into
+    the new official catalog by text, so admin-added entries are not lost.
+    """
+
+    global QUOTES, UPDATED_AT
+
+    if not LIBRARY_REFRESH_LOCK.acquire(blocking=False):
+        return {"skipped": True, "reason": "another refresh is already running"}
+
+    try:
+        payload = library_source.build_library(BUNDLE_BASE_URL)
+
+        official: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in payload.get("quotes", []):
+            if not isinstance(item, dict):
+                continue
+            quote = _normalize_quote(item)
+            if quote is None:
+                continue
+            key = quote["text"].casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            official.append(quote)
+
+        if len(official) < MIN_REFRESH_QUOTES:
+            raise RuntimeError(
+                f"downloaded only {len(official)} quotes; "
+                f"refusing to replace the library (minimum {MIN_REFRESH_QUOTES})"
+            )
+
+        with LOCK:
+            official_texts = {quote["text"].casefold() for quote in official}
+            custom: list[dict[str, Any]] = []
+            custom_texts: set[str] = set()
+            for quote in QUOTES:
+                if not _is_custom_quote(quote):
+                    continue
+                key = str(quote.get("text") or "").casefold()
+                if not key or key in official_texts or key in custom_texts:
+                    continue
+                custom_texts.add(key)
+                custom.append(dict(quote))
+
+            merged = official + custom
+            updated_at = str(payload.get("updatedAt") or _now())
+
+            out_payload = {
+                "name": "PCL Hitokoto Library",
+                "source": "https://github.com/hitokoto-osc/sentences-bundle",
+                "sourceRaw": payload.get("sourceRaw"),
+                "license": "AGPL-3.0",
+                "updatedAt": updated_at,
+                "count": len(merged),
+                "quotes": merged,
+                "bundleVersion": payload.get("bundleVersion"),
+                "bundleUpdatedAt": payload.get("bundleUpdatedAt"),
+                "duplicatesRemoved": payload.get("duplicatesRemoved", 0),
+                "missingCreatedAt": payload.get("missingCreatedAt", 0),
+                "categories": payload.get("categories", {}),
+            }
+
+            if DATA_FILE.exists():
+                try:
+                    shutil.copy2(DATA_FILE, DATA_FILE.with_name(DATA_FILE.name + ".bak"))
+                except OSError as exc:
+                    logger.warning("could not back up %s: %s", DATA_FILE, exc)
+
+            library_source.write_json_atomic(DATA_FILE, out_payload, mode=0o600)
+            QUOTES = merged
+            UPDATED_AT = updated_at
+
+        try:
+            library_source.write_source_metadata(DATA_FILE.parent, payload, custom_count=len(custom))
+        except Exception as exc:
+            logger.warning("library refreshed but SOURCE.json was not updated: %s", exc)
+
+        return {
+            "skipped": False,
+            "official": len(official),
+            "custom": len(custom),
+            "total": len(merged),
+            "bundleVersion": payload.get("bundleVersion"),
+        }
+    finally:
+        LIBRARY_REFRESH_LOCK.release()
+
+
+def _initial_refresh_delay() -> int:
+    """Schedule the first refresh at the remaining part of the 8h window."""
+
+    if REFRESH_INTERVAL_SECONDS <= 0:
+        return 0
+    if not UPDATED_AT:
+        return min(60, REFRESH_INTERVAL_SECONDS)
+    try:
+        updated = datetime.fromisoformat(UPDATED_AT.replace("Z", "+00:00"))
+        if updated.tzinfo is None:
+            updated = updated.replace(tzinfo=timezone.utc)
+        age = max(0, int((datetime.now(timezone.utc) - updated).total_seconds()))
+    except (TypeError, ValueError, OSError):
+        return min(60, REFRESH_INTERVAL_SECONDS)
+    if age >= REFRESH_INTERVAL_SECONDS:
+        return min(60, REFRESH_INTERVAL_SECONDS)
+    return max(60, REFRESH_INTERVAL_SECONDS - age)
+
+
+async def _library_refresh_loop() -> None:
+    """Periodically refresh the official catalog without blocking requests."""
+
+    delay = _initial_refresh_delay()
+    logger.info(
+        "library auto-refresh enabled: every %d seconds, retry after %d seconds",
+        REFRESH_INTERVAL_SECONDS,
+        REFRESH_RETRY_SECONDS,
+    )
+    while True:
+        await asyncio.sleep(delay)
+        try:
+            summary = await asyncio.to_thread(_refresh_library)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("automatic library refresh failed; keeping the current library")
+            delay = max(60, min(REFRESH_RETRY_SECONDS, REFRESH_INTERVAL_SECONDS))
+            continue
+
+        if summary.get("skipped"):
+            logger.info("automatic library refresh skipped: %s", summary.get("reason"))
+        else:
+            logger.info(
+                "automatic library refresh complete: official=%d custom=%d total=%d bundle=%s",
+                summary.get("official", 0),
+                summary.get("custom", 0),
+                summary.get("total", 0),
+                summary.get("bundleVersion") or "-",
+            )
+        delay = REFRESH_INTERVAL_SECONDS
+
+
 def _require_admin(authorization: str | None, x_admin_token: str | None) -> None:
     if not ADMIN_TOKEN:
         raise HTTPException(
@@ -309,6 +521,9 @@ def _add_one_locked(payload: QuoteIn) -> tuple[dict[str, Any] | None, str | None
     if quote is None:
         return None, None
 
+    # Mark entries added through the admin API so an official refresh can
+    # keep them while replacing the downloaded catalog.
+    quote.setdefault("origin", "custom")
     key = quote["text"].casefold()
     for existing in QUOTES:
         if existing["text"].casefold() == key:
@@ -335,6 +550,66 @@ def _homepage_quote(seed: str) -> dict[str, Any] | None:
         return dict(QUOTES[index])
 
 
+SEARCH_LIMIT = 12
+SEARCH_FIELDS = ("text", "source", "author", "type", "typeCode")
+
+
+def _normalize_search_query(raw: str) -> str:
+    """Normalize a PCL search term without turning it into shared state."""
+
+    value = html.unescape(str(raw or ""))
+    value = "".join(
+        ch
+        for ch in value
+        if ch in "\t\n\r" or 0x20 <= ord(ch) <= 0xD7FF or 0xE000 <= ord(ch) <= 0xFFFD
+    )
+    value = " ".join(value.split())
+    return value[:80]
+
+
+def _raw_query_value(raw_query: str, name: str) -> str:
+    """Read a query value from the raw URL.
+
+    PCL HTML-encodes variable values before inserting them into the homepage
+    URL, so a search term containing ``&`` can arrive as ``&amp;``. Reading the
+    raw value and unescaping it after URL-decoding keeps the whole term intact.
+    The homepage URL places ``q`` last, so everything after ``q=`` belongs to it.
+    """
+
+    if not raw_query:
+        return ""
+    marker = name + "="
+    index = raw_query.find("&" + marker)
+    if index >= 0:
+        value = raw_query[index + 1 + len(marker):]
+    elif raw_query.startswith(marker):
+        value = raw_query[len(marker):]
+    else:
+        return ""
+    try:
+        value = unquote(value)
+    except Exception:
+        pass
+    return html.unescape(value)
+
+
+def _search_quotes(query: str, limit: int = SEARCH_LIMIT) -> list[dict[str, Any]]:
+    """Search the in-memory library for one request; never mutate global state."""
+
+    needle = query.casefold()
+    if not needle:
+        return []
+    matches: list[dict[str, Any]] = []
+    with LOCK:
+        for quote in QUOTES:
+            haystack = " ".join(str(quote.get(field) or "") for field in SEARCH_FIELDS).casefold()
+            if needle in haystack:
+                matches.append(dict(quote))
+                if len(matches) >= limit:
+                    break
+    return matches
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     _load_library()
@@ -342,7 +617,23 @@ async def lifespan(_app: FastAPI):
         logger.info("POST endpoints are enabled")
     else:
         logger.warning("HITOKOTO_ADMIN_TOKEN is empty; POST endpoints are disabled")
-    yield
+
+    refresh_task = None
+    if REFRESH_INTERVAL_SECONDS > 0:
+        refresh_task = asyncio.create_task(
+            _library_refresh_loop(),
+            name="hitokoto-library-refresh",
+        )
+    else:
+        logger.info("library auto-refresh is disabled (HITOKOTO_REFRESH_HOURS=0)")
+
+    try:
+        yield
+    finally:
+        if refresh_task is not None:
+            refresh_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await refresh_task
 
 
 app = FastAPI(
@@ -354,7 +645,9 @@ app = FastAPI(
 )
 
 NO_STORE_HEADERS = {
-    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    # ``private`` matters: a search result belongs to one PCL user and must
+    # never be served from a shared proxy cache to another user.
+    "Cache-Control": "private, no-store, no-cache, must-revalidate, max-age=0",
     "Pragma": "no-cache",
     "Expires": "0",
     "X-Content-Type-Options": "nosniff",
@@ -385,8 +678,30 @@ def healthz() -> str:
 
 
 @app.get("/Custom.xaml")
-def custom_xaml(seed: str = Query(default="", max_length=200)) -> Response:
-    """Single-file homepage consumed by PCL's online homepage updater."""
+def custom_xaml(
+    request: Request,
+    seed: str = Query(default="", max_length=200),
+    q: str = Query(default="", max_length=200),
+    u: str = Query(default="", max_length=100),
+) -> Response:
+    """Single-file homepage consumed by PCL's online homepage updater.
+
+    ``u`` is accepted for compatibility with older links that used PCL's
+    ``{identify}`` marker, but PCL CE 2.15.1 does not substitute URL markers;
+    current pages put the query directly in ``q``. It is used only to derive a
+    short key for diagnostics. Search state is per request, never global, so
+    concurrent users cannot see or overwrite one another's results.
+    """
+
+    query = _normalize_search_query(_raw_query_value(request.url.query, "q") or q)
+    results = _search_quotes(query)
+    user_key = hashlib.sha256(u.encode("utf-8")).hexdigest()[:12] if u else ""
+    logger.debug(
+        "homepage render user=%s query_len=%d results=%d",
+        user_key or "-",
+        len(query),
+        len(results),
+    )
 
     quote = _homepage_quote(seed.strip())
     if quote is None:
@@ -402,6 +717,8 @@ def custom_xaml(seed: str = Query(default="", max_length=200)) -> Response:
                 quote=quote,
                 count=count,
                 base_url=HOME_BASE_URL,
+                query=query,
+                results=results,
             )
         except Exception:
             logger.exception("failed to render homepage XAML")

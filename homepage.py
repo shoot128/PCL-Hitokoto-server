@@ -57,6 +57,124 @@ def _quote_meta(quote: dict[str, Any]) -> str:
     return f"—— {source} / {author} / {quote_type}"
 
 
+def _search_status(query: str, results: list[dict[str, Any]]) -> str:
+    if not query:
+        return "输入关键词后点“搜索”；服务端会检索句库，并把结果写回这个页面。"
+    if results:
+        return f"搜索“{query}” · 找到 {len(results)} 条；点击结果即可复制。"
+    return f"搜索“{query}” · 没有找到匹配的一言。"
+
+
+def _render_search_results(
+    query: str,
+    results: list[dict[str, Any]],
+) -> str:
+    if not query:
+        return ""
+    if not results:
+        return (
+            '<TextBlock FontSize="12.5" Foreground="#777777" TextWrapping="Wrap" '
+            'Text="没有找到匹配的一言；换个关键词，或点“清空搜索”回到随机一言。" />'
+        )
+
+    items: list[str] = []
+    for index, quote in enumerate(results, 1):
+        text = _xml_text(quote.get("text") or "（空）")
+        info = _xml_text(f"{index}. {_quote_meta(quote)}")
+        items.append(
+            '<local:MyListItem Margin="0,0,0,6" '
+            'Type="Clickable" '
+            f'Title="{text}" '
+            f'Info="{info}" '
+            'EventType="复制文本" '
+            f'EventData="{text}" />'
+        )
+    return "\n".join(items)
+
+
+def _render_search_card() -> str:
+    """Search card for the dynamic page.
+
+    PCL CE does not substitute URL markers in the custom homepage address.
+    The search button therefore writes the per-user setting ``UiCustomNet``
+    to a full URL containing the query, then refreshes the homepage. The
+    setting is local to each PCL installation, so users do not share a query.
+    """
+
+    return """<local:MyCard Title="搜索一言库" Margin="0,0,0,15">
+    <StackPanel Margin="25,40,23,15">
+        <TextBlock FontSize="12.5"
+                   Foreground="#555555"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,10"
+                   Text="输入关键词后点“搜索”。按钮会把搜索词写进本机 PCL 的联网主页设置（UiCustomNet），再刷新下载；服务端按本次请求检索句库并把结果写回页面。每个 PCL 各自保存自己的链接，互不覆盖。" />
+
+        <TextBox x:Name="SearchBox"
+                 Height="34"
+                 Padding="8,0,8,0"
+                 VerticalContentAlignment="Center"
+                 Text="__SEARCH_QUERY__"
+                 ToolTip="中文、英文、空格和 &amp; 都可以；不要包含竖线或井号。" />
+
+        <WrapPanel Margin="0,10,0,0">
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="18,0,18,0"
+                            ColorType="Highlight"
+                            Text="搜索"
+                            EventType="刷新主页"
+                            EventData="-">
+                <local:CustomEventService.Events>
+                    <local:CustomEventCollection>
+                        <local:CustomEvent Type="修改设置"
+                                           Data="{Binding Text, Source={x:Reference SearchBox}, StringFormat='UiCustomNet|__BASE_URL__/Custom.xaml?q={0}|-'}" />
+                    </local:CustomEventCollection>
+                </local:CustomEventService.Events>
+            </local:MyButton>
+
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="16,0,16,0"
+                            Text="清空搜索"
+                            EventType="刷新主页"
+                            EventData="-">
+                <local:CustomEventService.Events>
+                    <local:CustomEventCollection>
+                        <local:CustomEvent Type="修改设置" Data="UiCustomNet|__BASE_URL__/Custom.xaml|-" />
+                    </local:CustomEventCollection>
+                </local:CustomEventService.Events>
+            </local:MyButton>
+        </WrapPanel>
+
+        <TextBlock FontSize="12"
+                   Margin="0,2,0,6"
+                   Foreground="#666666"
+                   TextWrapping="Wrap">
+            <TextBlock.Text>__SEARCH_STATUS__</TextBlock.Text>
+        </TextBlock>
+
+        <StackPanel Margin="0,2,0,0">__SEARCH_RESULTS__</StackPanel>
+    </StackPanel>
+</local:MyCard>
+
+"""
+
+
+def _render_static_search_notice() -> str:
+    """Shown in the static snapshot, where there is no server to search."""
+
+    return """<local:MyCard Title="搜索需要动态版" Margin="0,0,0,15">
+    <StackPanel Margin="25,40,23,15">
+        <TextBlock FontSize="12.5"
+                   Foreground="#555555"
+                   TextWrapping="Wrap"
+                   Text="当前是静态快照，只能展示固定的一句，不能搜索。使用服务器动态链接后，输入关键词即可由服务端检索句库并把结果写回页面。" />
+    </StackPanel>
+</local:MyCard>
+
+"""
+
+
 def render_homepage(
     *,
     quote: dict[str, Any],
@@ -64,8 +182,16 @@ def render_homepage(
     base_url: str,
     version: str = "1.0",
     now: datetime | None = None,
+    query: str = "",
+    results: list[dict[str, Any]] | None = None,
+    search_enabled: bool = True,
 ) -> str:
-    """Return a complete Custom.xaml fragment with one quote baked in."""
+    """Return a complete Custom.xaml fragment with one quote baked in.
+
+    ``query`` and ``results`` belong to this request only. The renderer never
+    writes them to module state, so two PCL users searching at the same time
+    cannot overwrite each other's page.
+    """
 
     template = TEMPLATE_FILE.read_text(encoding="utf-8")
     current = now or datetime.now(BEIJING)
@@ -73,25 +199,73 @@ def render_homepage(
         current = current.replace(tzinfo=BEIJING)
     else:
         current = current.astimezone(BEIJING)
+    result_list = list(results or [])
+    query = str(query or "").strip()
+
+    template = template.replace(
+        "__SEARCH_CARD__",
+        _render_search_card() if search_enabled else _render_static_search_notice(),
+    )
+    refresh_events = ""
+    if search_enabled:
+        safe_base = _xml_text(base_url.rstrip("/"))
+        refresh_events = (
+            "<local:CustomEventService.Events>\n"
+            "                    <local:CustomEventCollection>\n"
+            '                        <local:CustomEvent Type="修改设置" '
+            f'Data="UiCustomNet|{safe_base}/Custom.xaml|-" />\n'
+            "                    </local:CustomEventCollection>\n"
+            "                </local:CustomEventService.Events>"
+        )
+    template = template.replace("__REFRESH_EVENTS_BLOCK__", refresh_events)
 
     values = {
         "__QUOTE__": str(quote.get("text") or "路漫漫其修远兮，吾将上下而求索。"),
         "__META__": _quote_meta(quote),
-        "__STATUS__": f"● 在线句库 · 共 {count} 条 · {current:%Y-%m-%d %H:%M}",
-        "__INFO__": "本页由服务端动态生成；每次启动 PCL 会重新下载并换一句。断网时 PCL 会显示上次缓存。",
+        "__STATUS__": (
+            f"● 在线句库 · 共 {count} 条 · {current:%Y-%m-%d %H:%M}"
+            if search_enabled
+            else f"● 静态快照 · 共 {count} 条 · {current:%Y-%m-%d %H:%M}"
+        ),
+        "__INFO__": (
+            "本页由服务端动态生成；每次启动 PCL 会重新下载并换一句。断网时 PCL 会显示上次缓存。"
+            if search_enabled
+            else "这是静态快照，由 GitHub / jsDelivr 提供；不会自动换句，也不能搜索。断网时 PCL 会显示上次缓存。"
+        ),
         "__COUNT__": str(count),
         "__DATE__": current.strftime("%Y-%m-%d"),
         "__YEAR__": str(current.year),
         "__VERSION__": version,
         "__BASE_URL__": base_url.rstrip("/"),
+        "__SEARCH_QUERY__": query,
+        "__SEARCH_STATUS__": _search_status(query, result_list),
+        "__REFRESH_TOOLTIP__": (
+            "清空搜索条件并重新下载 Custom.xaml，服务端会返回新的一句。"
+            if search_enabled
+            else "静态快照没有服务端；这里只重新读取当前页面，不会换句。"
+        ),
+        "__REFRESH_USAGE__": (
+            "3. 每次启动 PCL 都会重新检查版本；服务端每次返回新的时间戳，因此会重新下载并换一句。页面里的“换一句”和“清空搜索”会把联网主页地址改回不带 q 的地址，再刷新下载，所以会回到随机一言。"
+            if search_enabled
+            else "3. 静态快照没有服务端；“换一句”只会重新读取当前页面，不能换句，也不会修改联网主页地址。"
+        ),
     }
 
     for key, value in values.items():
         template = template.replace(key, _xml_text(value))
 
     unresolved = sorted(set(_PLACEHOLDER.findall(template)))
+    if "__SEARCH_RESULTS__" in unresolved:
+        unresolved.remove("__SEARCH_RESULTS__")
     if unresolved:
         raise ValueError("unresolved homepage placeholders: " + ", ".join(unresolved))
+
+    # Insert result XAML last so a quote containing ``__LIKE_THIS__`` cannot be
+    # mistaken for an unresolved template placeholder.
+    template = template.replace(
+        "__SEARCH_RESULTS__",
+        _render_search_results(query, result_list) if search_enabled else "",
+    )
     return template
 
 

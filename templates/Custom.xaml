@@ -6,7 +6,7 @@
     不再依赖 PowerShell、VBS 或本地 Hitokoto 文件夹。
 
     动态更新链接（PCL 会同时请求 Custom.xaml.ini 检查版本）：
-      https://yiyan.overpass.top/Custom.xaml
+      https://你的域名/Custom.xaml
      PCL CE 不会替换网址里的花括号标记；页面搜索时先由“搜索”按钮通过
      “修改设置”把本机 UiCustomNet 改成带 ?q= 的地址，再点“刷新结果”
      下载。每个 PCL 各自保存自己的地址，服务端不保存“上一个用户搜了什么”。
@@ -79,7 +79,7 @@
                             Height="35"
                             Padding="16,0,16,0"
                             Text="打开一言 API"
-                            ToolTip="在浏览器中打开 https://v1.hitokoto.cn/"
+                            ToolTip="在浏览器中打开一言 API"
                             EventType="打开网页"
                             EventData="https://v1.hitokoto.cn/" />
         </WrapPanel>
@@ -135,9 +135,9 @@ __SEARCH_CARD__
 <local:MyCard Title="使用说明与已知限制" Margin="0,0,0,0" CanSwap="True" IsSwapped="True">
     <StackPanel Margin="25,40,23,15">
         <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
-                   Text="1. 在 PCL 的“主页 → 联网下载”中填写更新链接：__BASE_URL__/Custom.xaml。PCL 会请求同目录的 Custom.xaml.ini 判断是否需要更新，然后只下载 Custom.xaml 这一个文件。" />
+                   Text="1. 在 PCL 的“主页 → 联网下载”中填写更新链接：https://你的域名/Custom.xaml。PCL 会请求同目录的 Custom.xaml.ini 判断是否需要更新，然后只下载 Custom.xaml 这一个文件。" />
         <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
-                   Text="2. 动态版先点“搜索”，把本机 PCL 的联网主页地址改成 __BASE_URL__/Custom.xaml?q=关键词；再点“刷新结果”下载。每个 PCL 各存各的地址，服务端按本次请求检索，不保存上一位用户的关键词；关键词里不要包含竖线 | 或井号 #。" />
+                   Text="2. 动态版先点“搜索”，把本机 PCL 的联网主页地址改成 https://你的域名/Custom.xaml?q=关键词；再点“刷新结果”下载。每个 PCL 各存各的地址，服务端按本次请求检索，不保存上一位用户的关键词；关键词里不要包含竖线 | 或井号 #。" />
         <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
                    Text="__REFRESH_USAGE__" />
         <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"

@@ -164,6 +164,9 @@ def _resolve_data_file() -> Path:
 DATA_FILE = _resolve_data_file()
 LOCK = threading.RLock()
 QUOTES: list[dict[str, Any]] = []
+SEARCH_FIELDS = ("text", "source", "author", "type", "typeCode")
+SEARCH_INDEX: list[str] = []
+DEFAULT_SEARCH_PAGE = 100
 UPDATED_AT = ""
 
 logger = logging.getLogger("hitokoto")
@@ -292,12 +295,26 @@ def _extract_items(raw: Any) -> list[Any]:
     raise ValueError("JSON root must be an array, or contain quotes/data/results/items")
 
 
+def _search_haystack(quote: dict[str, Any]) -> str:
+    """Return the casefolded searchable text for one quote."""
+
+    return " ".join(str(quote.get(field) or "") for field in SEARCH_FIELDS).casefold()
+
+
+def _rebuild_search_index_locked() -> None:
+    """Rebuild the per-quote search index; caller must hold ``LOCK``."""
+
+    global SEARCH_INDEX
+    SEARCH_INDEX = [_search_haystack(quote) for quote in QUOTES]
+
+
 def _load_library() -> None:
     global QUOTES, UPDATED_AT
 
     if not DATA_FILE.exists():
         QUOTES = []
         UPDATED_AT = ""
+        _rebuild_search_index_locked()
         logger.warning("data file does not exist yet: %s", DATA_FILE)
         return
 
@@ -308,6 +325,7 @@ def _load_library() -> None:
         logger.exception("could not read %s; starting with an empty library", DATA_FILE)
         QUOTES = []
         UPDATED_AT = ""
+        _rebuild_search_index_locked()
         return
 
     seen: set[str] = set()
@@ -325,6 +343,7 @@ def _load_library() -> None:
         quotes.append(quote)
 
     QUOTES = quotes
+    _rebuild_search_index_locked()
     if not quotes:
         UPDATED_AT = ""
     elif isinstance(raw, dict):
@@ -445,6 +464,7 @@ def _refresh_library() -> dict[str, Any]:
 
             library_source.write_json_atomic(DATA_FILE, out_payload, mode=0o600)
             QUOTES = merged
+            _rebuild_search_index_locked()
             UPDATED_AT = updated_at
 
         try:
@@ -550,6 +570,7 @@ def _add_one_locked(payload: QuoteIn) -> tuple[dict[str, Any] | None, str | None
             return None, existing["id"]
 
     QUOTES.append(quote)
+    SEARCH_INDEX.append(_search_haystack(quote))
     return quote, None
 
 
@@ -568,10 +589,6 @@ def _homepage_quote(seed: str) -> dict[str, Any] | None:
         digest = hashlib.sha256(seed.encode("utf-8")).digest()
         index = int.from_bytes(digest[:8], "big") % len(QUOTES)
         return dict(QUOTES[index])
-
-
-SEARCH_LIMIT = 12
-SEARCH_FIELDS = ("text", "source", "author", "type", "typeCode")
 
 
 def _normalize_search_query(raw: str) -> str:
@@ -613,21 +630,46 @@ def _raw_query_value(raw_query: str, name: str) -> str:
     return html.unescape(value)
 
 
-def _search_quotes(query: str, limit: int = SEARCH_LIMIT) -> list[dict[str, Any]]:
-    """Search the in-memory library for one request; never mutate global state."""
+def _search_quotes(query: str) -> list[dict[str, Any]]:
+    """Search the in-memory library for one request; never mutate global state.
+
+    Every match is returned. The library is bounded (roughly ten thousand
+    quotes), so a request cannot grow without limit; truncating here would
+    hide matches the user explicitly asked to see. The client renders all
+    returned rows, which keeps a very broad keyword (for example one common
+    Chinese character) honest instead of silently dropping results.
+    """
 
     needle = query.casefold()
     if not needle:
         return []
     matches: list[dict[str, Any]] = []
     with LOCK:
-        for quote in QUOTES:
-            haystack = " ".join(str(quote.get(field) or "") for field in SEARCH_FIELDS).casefold()
+        if len(SEARCH_INDEX) != len(QUOTES):
+            _rebuild_search_index_locked()
+        for quote, haystack in zip(QUOTES, SEARCH_INDEX):
             if needle in haystack:
                 matches.append(dict(quote))
-                if len(matches) >= limit:
-                    break
     return matches
+
+
+def _shown_count(raw: str, total: int) -> int:
+    """Return how many matches this request should render.
+
+    ``n`` is the number of rows currently requested.  Invalid, missing or
+    non-positive values fall back to the first page; the result is always
+    clamped to the real match count so a hand-edited URL cannot claim more.
+    """
+
+    if total <= 0:
+        return 0
+    try:
+        value = int(str(raw or "").strip())
+    except (TypeError, ValueError):
+        value = DEFAULT_SEARCH_PAGE
+    if value <= 0:
+        value = DEFAULT_SEARCH_PAGE
+    return min(value, total)
 
 
 @asynccontextmanager
@@ -703,6 +745,7 @@ def custom_xaml(
     seed: str = Query(default="", max_length=200),
     q: str = Query(default="", max_length=200),
     u: str = Query(default="", max_length=100),
+    n: str = Query(default="", max_length=20),
 ) -> Response:
     """Single-file homepage consumed by PCL's online homepage updater.
 
@@ -715,12 +758,15 @@ def custom_xaml(
 
     query = _normalize_search_query(_raw_query_value(request.url.query, "q") or q)
     results = _search_quotes(query)
+    shown = _shown_count(n, len(results))
+    visible_results = results[:shown]
     user_key = hashlib.sha256(u.encode("utf-8")).hexdigest()[:12] if u else ""
     logger.debug(
-        "homepage render user=%s query_len=%d results=%d",
+        "homepage render user=%s query_len=%d results=%d shown=%d",
         user_key or "-",
         len(query),
         len(results),
+        shown,
     )
 
     quote = _homepage_quote(seed.strip())
@@ -738,7 +784,9 @@ def custom_xaml(
                 count=count,
                 base_url=_request_base_url(request),
                 query=query,
-                results=results,
+                results=visible_results,
+                total_results=len(results),
+                pcl299="PCL2/2.99" in (request.headers.get("user-agent") or ""),
             )
         except Exception:
             logger.exception("failed to render homepage XAML")

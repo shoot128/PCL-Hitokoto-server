@@ -7,9 +7,11 @@
 
     动态更新链接（PCL 会同时请求 Custom.xaml.ini 检查版本）：
       https://你的域名/Custom.xaml
-     PCL CE 不会替换网址里的花括号标记；页面搜索时先由“搜索”按钮通过
-     “修改设置”把本机 UiCustomNet 改成带 ?q= 的地址，再点“刷新结果”
-     下载。每个 PCL 各自保存自己的地址，服务端不保存“上一个用户搜了什么”。
+     PCL 2.99 支持在 CustomEvent.Data 上绑定输入框，搜索词直接写进
+     UiCustomNet，点一次“搜索”就会写入并刷新；PCL CE 2.15.1 不支持这个
+     绑定，搜索按钮先写入地址，再点“刷新结果”下载。两种情况都会先把
+     UiCustomType 设为 2，因此从“预设”进入时也会切到联网更新。每个 PCL
+     各自保存自己的地址，服务端不保存“上一个用户搜了什么”。
 -->
 
 <StackPanel.Resources>
@@ -137,7 +139,7 @@ __SEARCH_CARD__
         <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
                    Text="1. 在 PCL 的“主页 → 联网下载”中填写更新链接：https://你的域名/Custom.xaml。PCL 会请求同目录的 Custom.xaml.ini 判断是否需要更新，然后只下载 Custom.xaml 这一个文件。" />
         <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
-                   Text="2. 动态版先点“搜索”，把本机 PCL 的联网主页地址改成 https://你的域名/Custom.xaml?q=关键词；再点“刷新结果”下载。每个 PCL 各存各的地址，服务端按本次请求检索，不保存上一位用户的关键词；关键词里不要包含竖线 | 或井号 #。" />
+                   Text="__SEARCH_USAGE__" />
         <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"
                    Text="__REFRESH_USAGE__" />
         <TextBlock TextWrapping="Wrap" FontSize="12" Margin="0,0,0,6"

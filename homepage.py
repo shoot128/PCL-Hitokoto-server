@@ -12,9 +12,16 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_FILE = BASE_DIR / "templates" / "Custom.xaml"
+
+# Search results are rendered in pages so a broad keyword does not create a
+# multi-thousand-row page in one go.  All matches stay on the server for this
+# request; the "load more" button asks for a larger prefix of the same list.
+SEARCH_PAGE_SIZE = 100
+SEARCH_PAGE_STEP = 200
 
 BEIJING = timezone(timedelta(hours=8))
 _PLACEHOLDER = re.compile(r"__[A-Z][A-Z0-9_]*__")
@@ -57,12 +64,64 @@ def _quote_meta(quote: dict[str, Any]) -> str:
     return f"—— {source} / {author} / {quote_type}"
 
 
-def _search_status(query: str, results: list[dict[str, Any]]) -> str:
+def _search_status(query: str, total: int, shown: int) -> str:
     if not query:
-        return "输入关键词后点“搜索”；服务端会检索句库，并把结果写回这个页面。"
-    if results:
-        return f"搜索“{query}” · 找到 {len(results)} 条；点击结果即可复制。"
-    return f"搜索“{query}” · 没有找到匹配的一言。"
+        return (
+            "输入关键词后点“搜索”；服务端会检索整个句库。"
+            f"先显示前 {SEARCH_PAGE_SIZE} 条，点“显示更多”继续加载，所有命中都会保留；"
+            "点每句下方的出处行可以复制整句。"
+        )
+    if total <= 0:
+        return f"搜索“{query}” · 没有找到匹配的一言。"
+    if shown >= total:
+        return (
+            f"搜索“{query}” · 共 {total} 条，已全部列出；"
+            "点每句下方的出处行即可复制。"
+        )
+    return (
+        f"搜索“{query}” · 共 {total} 条，当前显示 {shown} 条；"
+        "点下方“显示更多”继续加载，点出处行复制，不会丢结果。"
+    )
+
+
+def _render_load_more(
+    query: str,
+    total: int,
+    shown: int,
+    base_url: str,
+) -> str:
+    """Render a button that asks for a larger prefix of the same result list.
+
+    The URL is generated on the server with the current query already
+    percent-encoded, so the button works on both PCL 2.99 and PCL CE without a
+    binding: the collection event runs before the button's own refresh event.
+    """
+
+    if not query or shown >= total:
+        return ""
+    remaining = total - shown
+    batch = min(SEARCH_PAGE_STEP, remaining)
+    next_shown = shown + batch
+    url = f"{base_url.rstrip('/')}/Custom.xaml?n={next_shown}&q={quote(query, safe='')}"
+    label = (
+        f"显示剩余 {remaining} 条"
+        if remaining <= batch
+        else f"再显示 {batch} 条（还有 {remaining} 条）"
+    )
+    return f"""<WrapPanel Margin="0,10,0,0">
+    <local:MyButton Height="35"
+                    Padding="16,0,16,0"
+                    Text="{_xml_text(label)}"
+                    ToolTip="只增加显示数量，不会丢掉已经找到的结果"
+                    EventType="刷新主页"
+                    EventData="-">
+        <local:CustomEventService.Events>
+            <local:CustomEventCollection>
+                <local:CustomEvent Type="修改设置" Data="UiCustomNet|{_xml_text(url)}" />
+            </local:CustomEventCollection>
+        </local:CustomEventService.Events>
+    </local:MyButton>
+</WrapPanel>"""
 
 
 def _render_search_results(
@@ -80,20 +139,111 @@ def _render_search_results(
     items: list[str] = []
     for index, quote in enumerate(results, 1):
         text = _xml_text(quote.get("text") or "（空）")
-        info = _xml_text(f"{index}. {_quote_meta(quote)}")
+        meta_text = _quote_meta(quote).removeprefix("—— ")
+        meta = _xml_text(f"{index}. {meta_text} · 点击复制")
         items.append(
-            '<local:MyListItem Margin="0,0,0,6" '
-            'Type="Clickable" '
-            f'Title="{text}" '
-            f'Info="{info}" '
+            '<StackPanel Margin="0,0,0,12">'
+            '<TextBlock TextWrapping="Wrap" '
+            'FontSize="14" '
+            'LineHeight="21" '
+            'Foreground="{DynamicResource ColorBrush1}" '
+            f'Text="{text}" />'
+            f'<local:MyTextButton Text="{meta}" '
+            'FontSize="11" '
+            'Foreground="#888888" '
+            'Background="Transparent" '
+            'Padding="0" '
+            'Margin="0,3,0,0" '
+            'HorizontalAlignment="Left" '
+            'ToolTip="点击复制整句" '
             'EventType="复制文本" '
             f'EventData="{text}" />'
+            '</StackPanel>'
         )
     return "\n".join(items)
 
 
+def _render_search_card_pcl299() -> str:
+    """One-click search card for PCL 2.99.
+
+    PCL 2.99 supports Bindings on ``CustomEvent.Data``, so the search text can
+    be written directly into ``UiCustomNet``.  Avoid the ``修改变量`` +
+    ``{variable:HitokotoQ}`` indirection: it adds a registry write and a second
+    async event that can prevent the attached refresh from running.  PCL CE
+    2.15.1 cannot bind ``CustomEvent.Data`` and receives the two-button card
+    below instead.
+    """
+
+    return """<local:MyCard Title="搜索一言库" Margin="0,0,0,15">
+    <StackPanel Margin="25,40,23,15">
+        <TextBlock FontSize="12.5"
+                   Foreground="#555555"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,10"
+                   Text="PCL 2.99：输入关键词后点一次“搜索”即可。按钮会把关键词直接写进本机联网主页地址并刷新；服务端按本次请求检索句库，先把前 100 条写回页面，点“显示更多”继续加载，所有命中都会保留；点每句下方的出处行可复制整句。每个 PCL 保存自己的链接，互不覆盖。如果当前主页是“预设”，搜索会自动切换到“联网更新”。" />
+
+        <TextBox x:Name="SearchBox"
+                 Height="34"
+                 Padding="8,0,8,0"
+                 VerticalContentAlignment="Center"
+                 Text="__SEARCH_QUERY__"
+                 ToolTip="中文、英文、空格和 &amp; 都可以；不要包含竖线。" />
+
+        <WrapPanel Margin="0,10,0,0">
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="18,0,18,0"
+                            ColorType="Highlight"
+                            Text="搜索"
+                            EventType="刷新主页"
+                            EventData="-">
+                <local:CustomEventService.Events>
+                    <local:CustomEventCollection>
+                        <local:CustomEvent Type="修改设置" Data="UiCustomType|2" />
+                        <local:CustomEvent Type="修改设置" Data="{Binding Text, Source={x:Reference SearchBox}, StringFormat='UiCustomNet|__BASE_URL__/Custom.xaml?q={0}'}" />
+                    </local:CustomEventCollection>
+                </local:CustomEventService.Events>
+            </local:MyButton>
+
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="16,0,16,0"
+                            Text="刷新结果"
+                            ToolTip="通常不需要点；如果搜索后页面仍未更新，点这里重试"
+                            EventType="刷新主页"
+                            EventData="-" />
+
+            <local:MyButton Margin="0,0,10,8"
+                            Height="35"
+                            Padding="16,0,16,0"
+                            Text="清空搜索"
+                            EventType="刷新主页"
+                            EventData="-">
+                <local:CustomEventService.Events>
+                    <local:CustomEventCollection>
+                        <local:CustomEvent Type="修改设置" Data="UiCustomNet|__BASE_URL__/Custom.xaml" />
+                    </local:CustomEventCollection>
+                </local:CustomEventService.Events>
+            </local:MyButton>
+        </WrapPanel>
+
+        <TextBlock FontSize="12"
+                   Margin="0,2,0,6"
+                   Foreground="#666666"
+                   TextWrapping="Wrap">
+            <TextBlock.Text>__SEARCH_STATUS__</TextBlock.Text>
+        </TextBlock>
+
+        <StackPanel Margin="0,2,0,0">__SEARCH_RESULTS__</StackPanel>
+        __SEARCH_MORE__
+    </StackPanel>
+</local:MyCard>
+
+"""
+
+
 def _render_search_card() -> str:
-    """Search card for the dynamic page.
+    """Search card for PCL CE 2.15.1.
 
     PCL CE does not substitute URL markers in the custom homepage address.
     The search button writes the per-user setting ``UiCustomNet`` to a full
@@ -110,7 +260,7 @@ def _render_search_card() -> str:
                    Foreground="#555555"
                    TextWrapping="Wrap"
                    Margin="0,0,0,10"
-                   Text="输入关键词后点“搜索”，把搜索条件写进本机 PCL 的联网主页设置（UiCustomNet）；再点“刷新结果”下载。服务端按本次请求检索句库并把结果写回页面，每个 PCL 各自保存自己的链接，互不覆盖。" />
+                   Text="输入关键词后点“搜索”，把搜索条件写进本机 PCL 的联网主页设置（UiCustomNet）；再点“刷新结果”下载。服务端按本次请求检索句库，先把前 100 条写回页面，点“显示更多”会自动刷新并继续加载，所有命中都会保留；点每句下方的出处行可复制整句。每个 PCL 各自保存自己的链接，互不覆盖。" />
 
         <TextBox x:Name="SearchBox"
                  Height="34"
@@ -126,7 +276,13 @@ def _render_search_card() -> str:
                             ColorType="Highlight"
                             Text="搜索"
                             EventType="修改设置"
-                            EventData="{Binding Text, Source={x:Reference SearchBox}, StringFormat='UiCustomNet|__BASE_URL__/Custom.xaml?q={0}'}" />
+                            EventData="{Binding Text, Source={x:Reference SearchBox}, StringFormat='UiCustomNet|__BASE_URL__/Custom.xaml?q={0}'}">
+                <local:CustomEventService.Events>
+                    <local:CustomEventCollection>
+                        <local:CustomEvent Type="修改设置" Data="UiCustomType|2" />
+                    </local:CustomEventCollection>
+                </local:CustomEventService.Events>
+            </local:MyButton>
 
             <local:MyButton Margin="0,0,10,8"
                             Height="35"
@@ -157,6 +313,7 @@ def _render_search_card() -> str:
         </TextBlock>
 
         <StackPanel Margin="0,2,0,0">__SEARCH_RESULTS__</StackPanel>
+        __SEARCH_MORE__
     </StackPanel>
 </local:MyCard>
 
@@ -187,13 +344,17 @@ def render_homepage(
     now: datetime | None = None,
     query: str = "",
     results: list[dict[str, Any]] | None = None,
+    total_results: int | None = None,
     search_enabled: bool = True,
+    pcl299: bool = False,
 ) -> str:
     """Return a complete Custom.xaml fragment with one quote baked in.
 
-    ``query`` and ``results`` belong to this request only. The renderer never
-    writes them to module state, so two PCL users searching at the same time
-    cannot overwrite each other's page.
+    ``query`` and ``results`` belong to this request only. ``results`` is the
+    prefix currently shown and ``total_results`` is the full match count; the
+    page gets a "load more" button while the prefix is shorter than the total.
+    The renderer never writes request data to module state, so two PCL users
+    searching at the same time cannot overwrite each other's page.
     """
 
     template = TEMPLATE_FILE.read_text(encoding="utf-8")
@@ -203,23 +364,42 @@ def render_homepage(
     else:
         current = current.astimezone(BEIJING)
     result_list = list(results or [])
+    shown = len(result_list)
+    total = max(shown, int(total_results if total_results is not None else shown))
     query = str(query or "").strip()
 
     template = template.replace(
         "__SEARCH_CARD__",
-        _render_search_card() if search_enabled else _render_static_search_notice(),
+        (
+            _render_search_card_pcl299()
+            if search_enabled and pcl299
+            else _render_search_card()
+            if search_enabled
+            else _render_static_search_notice()
+        ),
     )
     refresh_events = ""
     if search_enabled:
         safe_base = _xml_text(base_url.rstrip("/"))
-        refresh_events = (
-            "<local:CustomEventService.Events>\n"
-            "                    <local:CustomEventCollection>\n"
-            '                        <local:CustomEvent Type="修改设置" '
-            f'Data="UiCustomNet|{safe_base}/Custom.xaml|-" />\n'
-            "                    </local:CustomEventCollection>\n"
-            "                </local:CustomEventService.Events>"
-        )
+        reset_url = f"{safe_base}/Custom.xaml"
+        if pcl299:
+            refresh_events = (
+                "<local:CustomEventService.Events>\n"
+                "                    <local:CustomEventCollection>\n"
+                '                        <local:CustomEvent Type="修改设置" '
+                f'Data="UiCustomNet|{reset_url}" />\n'
+                "                    </local:CustomEventCollection>\n"
+                "                </local:CustomEventService.Events>"
+            )
+        else:
+            refresh_events = (
+                "<local:CustomEventService.Events>\n"
+                "                    <local:CustomEventCollection>\n"
+                '                        <local:CustomEvent Type="修改设置" '
+                f'Data="UiCustomNet|{reset_url}|-" />\n'
+                "                    </local:CustomEventCollection>\n"
+                "                </local:CustomEventService.Events>"
+            )
     template = template.replace("__REFRESH_EVENTS_BLOCK__", refresh_events)
 
     values = {
@@ -241,7 +421,16 @@ def render_homepage(
         "__VERSION__": version,
         "__BASE_URL__": base_url.rstrip("/"),
         "__SEARCH_QUERY__": query,
-        "__SEARCH_STATUS__": _search_status(query, result_list),
+        "__SEARCH_STATUS__": _search_status(query, total, shown),
+        "__SEARCH_USAGE__": (
+            "2. 静态快照没有服务端，不能搜索；动态版在 PCL 2.99 输入关键词后点一次“搜索”即可，PCL CE 再点“刷新结果”。每个 PCL 各存各的地址，服务端按本次请求检索，不保存上一位用户的关键词。"
+            if not search_enabled
+            else (
+                "2. 输入关键词后点一次“搜索”：按钮会把关键词直接写进本机 PCL 的联网主页地址并刷新；如果页面仍未更新，再点旁边的“刷新结果”重试。结果先显示前 100 条，点“显示更多”继续加载，所有命中都会保留。每个 PCL 各存各的地址，服务端按本次请求检索，不保存上一位用户的关键词；关键词里不要包含竖线。"
+                if pcl299
+                else "2. 动态版先点“搜索”，把本机 PCL 的联网主页地址改成 https://你的域名/Custom.xaml?q=关键词；再点“刷新结果”下载。结果先显示前 100 条，点“显示更多”会自动刷新并继续加载，所有命中都会保留。每个 PCL 各存各的地址，服务端按本次请求检索，不保存上一位用户的关键词；关键词里不要包含竖线 | 或井号 #。"
+            )
+        ),
         "__REFRESH_TOOLTIP__": (
             "清空搜索条件并重新下载 Custom.xaml，服务端会返回新的一句。"
             if search_enabled
@@ -258,8 +447,9 @@ def render_homepage(
         template = template.replace(key, _xml_text(value))
 
     unresolved = sorted(set(_PLACEHOLDER.findall(template)))
-    if "__SEARCH_RESULTS__" in unresolved:
-        unresolved.remove("__SEARCH_RESULTS__")
+    for deferred in ("__SEARCH_RESULTS__", "__SEARCH_MORE__"):
+        if deferred in unresolved:
+            unresolved.remove(deferred)
     if unresolved:
         raise ValueError("unresolved homepage placeholders: " + ", ".join(unresolved))
 
@@ -268,6 +458,14 @@ def render_homepage(
     template = template.replace(
         "__SEARCH_RESULTS__",
         _render_search_results(query, result_list) if search_enabled else "",
+    )
+    template = template.replace(
+        "__SEARCH_MORE__",
+        (
+            _render_load_more(query, total, shown, base_url)
+            if search_enabled
+            else ""
+        ),
     )
     return template
 

@@ -66,11 +66,7 @@ def _quote_meta(quote: dict[str, Any]) -> str:
 
 def _search_status(query: str, total: int, shown: int) -> str:
     if not query:
-        return (
-            "输入关键词后点“搜索”；服务端会检索整个句库。"
-            f"先显示前 {SEARCH_PAGE_SIZE} 条，点“显示更多”继续加载，所有命中都会保留；"
-            "点每句下方的出处行可以复制整句。"
-        )
+        return "输入关键词后点“搜索”；PCL CE 再点“刷新结果”。"
     if total <= 0:
         return f"搜索“{query}” · 没有找到匹配的一言。"
     if shown >= total:
@@ -176,12 +172,6 @@ def _render_search_card_pcl299() -> str:
 
     return """<local:MyCard Title="搜索一言库" Margin="0,0,0,15">
     <StackPanel Margin="25,40,23,15">
-        <TextBlock FontSize="12.5"
-                   Foreground="#555555"
-                   TextWrapping="Wrap"
-                   Margin="0,0,0,10"
-                   Text="PCL 2.99：输入关键词后点一次“搜索”即可。按钮会把关键词直接写进本机联网主页地址并刷新；服务端按本次请求检索句库，先把前 100 条写回页面，点“显示更多”继续加载，所有命中都会保留；点每句下方的出处行可复制整句。每个 PCL 保存自己的链接，互不覆盖。如果当前主页是“预设”，搜索会自动切换到“联网更新”。" />
-
         <TextBox x:Name="SearchBox"
                  Height="34"
                  Padding="8,0,8,0"
@@ -256,12 +246,6 @@ def _render_search_card() -> str:
 
     return """<local:MyCard Title="搜索一言库" Margin="0,0,0,15">
     <StackPanel Margin="25,40,23,15">
-        <TextBlock FontSize="12.5"
-                   Foreground="#555555"
-                   TextWrapping="Wrap"
-                   Margin="0,0,0,10"
-                   Text="输入关键词后点“搜索”，把搜索条件写进本机 PCL 的联网主页设置（UiCustomNet）；再点“刷新结果”下载。服务端按本次请求检索句库，先把前 100 条写回页面，点“显示更多”会自动刷新并继续加载，所有命中都会保留；点每句下方的出处行可复制整句。每个 PCL 各自保存自己的链接，互不覆盖。" />
-
         <TextBox x:Name="SearchBox"
                  Height="34"
                  Padding="8,0,8,0"

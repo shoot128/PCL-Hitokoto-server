@@ -778,6 +778,13 @@ def custom_xaml(
     else:
         with LOCK:
             count = len(QUOTES)
+        user_agent = request.headers.get("user-agent") or ""
+        # Official PCL builds expose CustomEvent.Data as a DependencyProperty,
+        # so the search box can be bound straight into the event. PCL CE 2.15
+        # made Data a plain CLR property, which cannot take a Binding and needs
+        # the two-button card. Version 2.15 only exists as CE; 2.12, 2.14 and
+        # 2.99 are official builds and all support the one-click card.
+        pcl_one_click = "PCL2/" in user_agent and "PCL2/2.15" not in user_agent
         try:
             body = homepage_xaml.render_homepage(
                 quote=quote,
@@ -786,7 +793,7 @@ def custom_xaml(
                 query=query,
                 results=visible_results,
                 total_results=len(results),
-                pcl299="PCL2/2.99" in (request.headers.get("user-agent") or ""),
+                pcl299=pcl_one_click,
             )
         except Exception:
             logger.exception("failed to render homepage XAML")

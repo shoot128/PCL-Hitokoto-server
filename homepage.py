@@ -160,14 +160,14 @@ def _render_search_results(
 
 
 def _render_search_card_pcl299() -> str:
-    """One-click search card for PCL 2.99.
+    """One-click search card for official PCL 2.12, 2.14 and 2.99.
 
-    PCL 2.99 supports Bindings on ``CustomEvent.Data``, so the search text can
-    be written directly into ``UiCustomNet``.  Avoid the ``修改变量`` +
-    ``{variable:HitokotoQ}`` indirection: it adds a registry write and a second
-    async event that can prevent the attached refresh from running.  PCL CE
-    2.15.1 cannot bind ``CustomEvent.Data`` and receives the two-button card
-    below instead.
+    These builds expose ``CustomEvent.Data`` as a DependencyProperty, so the
+    search text can be written directly into ``UiCustomNet``.  Avoid the
+    ``修改变量`` + ``{variable:HitokotoQ}`` indirection: it adds a registry
+    write and a second async event that can prevent the attached refresh from
+    running.  PCL CE 2.15 made ``CustomEvent.Data`` a plain CLR property that
+    cannot take a Binding, so CE receives the two-button card below instead.
     """
 
     return """<local:MyCard Title="搜索一言库" Margin="0,0,0,15">

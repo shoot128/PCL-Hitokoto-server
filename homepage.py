@@ -260,13 +260,7 @@ def _render_search_card() -> str:
                             ColorType="Highlight"
                             Text="搜索"
                             EventType="修改设置"
-                            EventData="{Binding Text, Source={x:Reference SearchBox}, StringFormat='UiCustomNet|__BASE_URL__/Custom.xaml?q={0}'}">
-                <local:CustomEventService.Events>
-                    <local:CustomEventCollection>
-                        <local:CustomEvent Type="修改设置" Data="UiCustomType|2" />
-                    </local:CustomEventCollection>
-                </local:CustomEventService.Events>
-            </local:MyButton>
+                            EventData="{Binding Text, Source={x:Reference SearchBox}, StringFormat='UiCustomNet|__BASE_URL__/Custom.xaml?q={0}'}" />
 
             <local:MyButton Margin="0,0,10,8"
                             Height="35"

@@ -784,7 +784,10 @@ def custom_xaml(
         # made Data a plain CLR property, which cannot take a Binding and needs
         # the two-button card. Version 2.15 only exists as CE; 2.12, 2.14 and
         # 2.99 are official builds and all support the one-click card.
-        pcl_one_click = "PCL2/" in user_agent and "PCL2/2.15" not in user_agent
+        # PCL CE's UA is like "PCL2/2.9.4.0 PCLCE/2.15.1": the first token is the
+        # upstream version CE forked from, so version matching alone is not enough.
+        ce_ua = "PCLCE" in user_agent or "PCL CE" in user_agent or "PCL2/2.15" in user_agent
+        pcl_one_click = "PCL2/" in user_agent and not ce_ua
         try:
             body = homepage_xaml.render_homepage(
                 quote=quote,

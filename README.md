@@ -17,17 +17,8 @@
 - 应用：同时尝试监听 `127.0.0.1:13469` 和 `[::1]:13469`（IPv4 + IPv6 回环；主机没有 `::1` 时会跳过并继续）；
 - Nginx：公网 `80/443` 同时监听 IPv4 和 IPv6；
 - 公网 IPv4 需要域名 A 记录和本机 IPv4 地址，公网 IPv6 需要 AAAA 记录；
-- 如果服务器本身只有 IPv6（例如 xf1），IPv4 访问必须在前置代理 / 隧道上做，单靠本机无法凭空提供公网 IPv4。
+- 如果服务器本身只有 IPv6，IPv4 访问必须在前置代理 / 隧道上做，单靠本机无法凭空提供公网 IPv4。
 
-> 原 xf1 的实际情况（历史记录）：有公网 IPv6，没有公网 IPv4，`lo` 上也没有 `::1`。因此应用只会成功绑定 `127.0.0.1`；证书修复后，Nginx 负责公网 IPv6 的 `80/443`；公网 IPv4 需要额外前置代理。应用日志出现 `[::1] ... Cannot assign requested address` 是预期行为。
->
-> 当时，`yiyan.overpass.top` 还解析到 `gz-1.overpass.top`，不是 xf1。把 A/AAAA 切到 xf1 之前，下面的公网 `curl` 和 PCL 更新链接都不会真正到达这台机器；本地 `http://127.0.0.1:13469/Custom.xaml` 不受影响。
-
-> **2026-11-15 更新：原 xf1 演示服务器已下线（服务器已出售）**。下面的 xf1 监听、证书和 DNS 记录只作为部署历史参考；代码不依赖 xf1，按第 2 节通用步骤部署到新机器即可。
->
-> 新的 xa1 实例已部署并通过 systemd 常驻，`https://xa-1.overpass.top` 可直接访问 10611 条句库和搜索；`yiyan.overpass.top` 已 CNAME 到 `xa-1.overpass.top`，两个域名现在都指向 xa1。
-
----
 
 ## 1. 接口
 
@@ -99,7 +90,6 @@ GET https://yiyan.overpass.top/Custom.xaml.ini
 1. PCL 先请求 `<更新链接>.ini`，拿到版本号；
 2. 版本变化时再请求 `Custom.xaml`；
 3. 服务端在返回前把当前一言、出处、作者、句库数量和生成时间写进 XAML；
-4. PCL 直接渲染这个文件，因此**不需要 PowerShell、VBS 或 `Hitokoto\` 文件夹**。
 
 `.ini` 每次请求都返回新的毫秒时间戳，所以 PCL 每次启动都会检查到新版本，并在后台重新下载主页。页面里的“换一句”按钮会先把联网主页地址改回不带 `q` 的地址，再触发 PCL 的“刷新主页”，因此会回到随机一言。
 
@@ -345,19 +335,6 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-完整配置见 [nginx/yiyan.overpass.top.conf](nginx/yiyan.overpass.top.conf)，关键点是：
-
-- `upstream hitokoto_backend { server 127.0.0.1:13469; }`；如果主机有 `::1`，可再加 `server [::1]:13469;` 做故障切换；
-- `server_name yiyan.overpass.top;`
-- 公网监听 `listen 80;` + `listen [::]:80 ipv6only=on;`；
-- 公网监听 `listen 443 ssl http2;` + `listen [::]:443 ssl http2 ipv6only=on;`；
-- 证书：
-  - `/mnt/ssl/overpass.top/fullchain.pem`
-  - `/mnt/ssl/overpass.top/privkey.pem`
-  - 同一张证书同时用于 IPv4 和 IPv6；请确保证书 SAN 包含 `yiyan.overpass.top`，或使用 `*.overpass.top` 通配符证书。如果证书实际放在 `/mnt/ssl/yiyan.overpass.top/`，把两行 `ssl_*` 路径改成该目录。
-- 80 端口 `301` 跳转到 HTTPS；
-- 代理头：`Host`、`X-Real-IP`、`X-Forwarded-For`、`X-Forwarded-Proto`。
-
 完整内容：
 
 ```nginx
@@ -415,14 +392,14 @@ server {
 
 ```bash
 # A / AAAA 都要看：IPv4 与 IPv6 各一条
-getent ahostsv4 yiyan.overpass.top
-getent ahostsv6 yiyan.overpass.top
+getent ahostsv4
+getent ahostsv6
 
 # 本机是否真的有公网 IPv4 / IPv6
 ip -brief addr
 
 # 证书
-sudo ls -l /mnt/ssl/overpass.top/fullchain.pem /mnt/ssl/overpass.top/privkey.pem
+sudo ls -l /mnt/ssl/overpass.top/*/mnt/ssl/*/privkey.pem
 ```
 
 证书文件必须存在、未过期，并且 Nginx 能读取。域名必须解析到这台服务器。确认证书覆盖新域名：
@@ -442,15 +419,6 @@ sudo systemctl reload nginx
 
 # Nginx 是否同时监听 IPv4 / IPv6
 sudo ss -lntp | grep -E ':(80|443)\b'
-
-# IPv4 与 IPv6 分别请求
-curl -4 -I https://yiyan.overpass.top/healthz
-curl -6 -I https://yiyan.overpass.top/healthz
-curl -4 -fsS https://yiyan.overpass.top/hitokoto.json | head -c 300
-curl -6 -fsS https://yiyan.overpass.top/hitokoto.json | head -c 300
-curl -4 -fsS https://yiyan.overpass.top/Custom.xaml | head -n 20
-curl -6 -fsS https://yiyan.overpass.top/Custom.xaml | head -n 20
-```
 
 如果其中一族的 `curl` 失败：
 

@@ -1,6 +1,6 @@
 # PCL 一言 · Linux 句库服务
 
-服务端域名：**`yiyan.overpass.top`**
+服务端域名：**`exmaple.com`**
 
 这是 PCL 自定义主页的 Linux 服务端，用来替代 Windows 端的本地 `Hitokoto.ps1` 数据源：
 
@@ -19,6 +19,9 @@
 - 公网 IPv4 需要域名 A 记录和本机 IPv4 地址，公网 IPv6 需要 AAAA 记录；
 - 如果服务器本身只有 IPv6，IPv4 访问必须在前置代理 / 隧道上做，单靠本机无法凭空提供公网 IPv4。
 
+> 本文使用占位域名 `exmaple.com`。实际部署时请替换成自己的域名，并自行配置 A/AAAA 记录、证书路径和 Nginx 日志文件名。
+
+---
 
 ## 1. 接口
 
@@ -81,8 +84,8 @@ PCL 的 `Hitokoto.ps1` 支持 `quotes` 包装，字段 `text` / `source` / `auth
 `/Custom.xaml` 返回的是**一个完整的 XAML 文件**，不是压缩包，也不依赖同目录的脚本：
 
 ```text
-GET https://yiyan.overpass.top/Custom.xaml
-GET https://yiyan.overpass.top/Custom.xaml.ini
+GET https://exmaple.com/Custom.xaml
+GET https://exmaple.com/Custom.xaml.ini
 ```
 
 工作方式与 `pcl-homepage` 一类联网主页相同：
@@ -90,6 +93,7 @@ GET https://yiyan.overpass.top/Custom.xaml.ini
 1. PCL 先请求 `<更新链接>.ini`，拿到版本号；
 2. 版本变化时再请求 `Custom.xaml`；
 3. 服务端在返回前把当前一言、出处、作者、句库数量和生成时间写进 XAML；
+4. PCL 直接渲染这个文件，因此**不需要 PowerShell、VBS 或 `Hitokoto\` 文件夹**。
 
 `.ini` 每次请求都返回新的毫秒时间戳，所以 PCL 每次启动都会检查到新版本，并在后台重新下载主页。页面里的“换一句”按钮会先把联网主页地址改回不带 `q` 的地址，再触发 PCL 的“刷新主页”，因此会回到随机一言。
 
@@ -179,7 +183,7 @@ HITOKOTO_REFRESH_HOURS=8
 HITOKOTO_REFRESH_RETRY_SECONDS=600
 
 # 单文件 Custom.xaml 里显示的站点地址，不要带结尾斜杠
-HITOKOTO_PUBLIC_BASE_URL=https://yiyan.overpass.top
+HITOKOTO_PUBLIC_BASE_URL=https://exmaple.com
 
 # 留空 = 禁用所有 POST 写入接口
 # 需要写入时生成一个长随机 Token：
@@ -197,7 +201,7 @@ HITOKOTO_ADMIN_TOKEN=
 | `HITOKOTO_REFRESH_HOURS` | `8` | 每多少小时自动重新下载官方句库；`0` 关闭；最小 1 分钟 |
 | `HITOKOTO_REFRESH_RETRY_SECONDS` | `600` | 自动刷新失败后的重试间隔；最小 60 秒 |
 | `HITOKOTO_BUNDLE_BASE` | 官方 raw 地址 | 可选，替换句库下载源；一般不需要改 |
-| `HITOKOTO_PUBLIC_BASE_URL` | `https://yiyan.overpass.top` | 单文件 `Custom.xaml` 里显示的站点地址，不带结尾斜杠 |
+| `HITOKOTO_PUBLIC_BASE_URL` | `https://exmaple.com` | 单文件 `Custom.xaml` 里显示的站点地址，不带结尾斜杠 |
 | `HITOKOTO_ADMIN_TOKEN` | 空 | 为空时 POST 接口返回 503 |
 | `HITOKOTO_LOG_LEVEL` | `info` | `critical/error/warning/info/debug/trace` |
 
@@ -330,10 +334,23 @@ sudo journalctl -u hitokoto -n 50 --no-pager
 ### 4.1 放置配置
 
 ```bash
-sudo cp /opt/hitokoto-server/nginx/yiyan.overpass.top.conf /etc/nginx/conf.d/yiyan.overpass.top.conf
+sudo cp /opt/hitokoto-server/nginx/exmaple.com.conf /etc/nginx/conf.d/exmaple.com.conf
 sudo nginx -t
 sudo systemctl reload nginx
 ```
+
+完整配置见 [nginx/exmaple.com.conf](nginx/exmaple.com.conf)，关键点是：
+
+- `upstream hitokoto_backend { server 127.0.0.1:13469; }`；如果主机有 `::1`，可再加 `server [::1]:13469;` 做故障切换；
+- `server_name exmaple.com;`
+- 公网监听 `listen 80;` + `listen [::]:80 ipv6only=on;`；
+- 公网监听 `listen 443 ssl http2;` + `listen [::]:443 ssl http2 ipv6only=on;`；
+- 证书：
+  - `/mnt/ssl/exmaple.com/fullchain.pem`
+  - `/mnt/ssl/exmaple.com/privkey.pem`
+  - 同一张证书同时用于 IPv4 和 IPv6；请确保证书 SAN 包含 `exmaple.com`，或使用 `*.exmaple.com` 通配符证书。如果证书实际放在其他目录，把两行 `ssl_*` 路径改成该目录。
+- 80 端口 `301` 跳转到 HTTPS；
+- 代理头：`Host`、`X-Real-IP`、`X-Forwarded-For`、`X-Forwarded-Proto`。
 
 完整内容：
 
@@ -348,7 +365,7 @@ upstream hitokoto_backend {
 server {
     listen 80;
     listen [::]:80 ipv6only=on;
-    server_name yiyan.overpass.top;
+    server_name exmaple.com;
 
     return 301 https://$host$request_uri;
 }
@@ -356,10 +373,10 @@ server {
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2 ipv6only=on;
-    server_name yiyan.overpass.top;
+    server_name exmaple.com;
 
-    ssl_certificate     /mnt/ssl/overpass.top/fullchain.pem;
-    ssl_certificate_key /mnt/ssl/overpass.top/privkey.pem;
+    ssl_certificate     /mnt/ssl/exmaple.com/fullchain.pem;
+    ssl_certificate_key /mnt/ssl/exmaple.com/privkey.pem;
 
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_session_cache   shared:SSL:10m;
@@ -368,8 +385,8 @@ server {
 
     client_max_body_size 2m;
 
-    access_log /var/log/nginx/yiyan.overpass.top.access.log;
-    error_log  /var/log/nginx/yiyan.overpass.top.error.log warn;
+    access_log /var/log/nginx/exmaple.com.access.log;
+    error_log  /var/log/nginx/exmaple.com.error.log warn;
 
     location / {
         proxy_pass http://hitokoto_backend;
@@ -392,24 +409,24 @@ server {
 
 ```bash
 # A / AAAA 都要看：IPv4 与 IPv6 各一条
-getent ahostsv4
-getent ahostsv6
+getent ahostsv4 exmaple.com
+getent ahostsv6 exmaple.com
 
 # 本机是否真的有公网 IPv4 / IPv6
 ip -brief addr
 
 # 证书
-sudo ls -l /mnt/ssl/overpass.top/*/mnt/ssl/*/privkey.pem
+sudo ls -l /mnt/ssl/exmaple.com/fullchain.pem /mnt/ssl/exmaple.com/privkey.pem
 ```
 
 证书文件必须存在、未过期，并且 Nginx 能读取。域名必须解析到这台服务器。确认证书覆盖新域名：
 
 ```bash
-openssl x509 -in /mnt/ssl/overpass.top/fullchain.pem -noout -text \
+openssl x509 -in /mnt/ssl/exmaple.com/fullchain.pem -noout -text \
   | grep -A1 "Subject Alternative Name"
 ```
 
-输出中应包含 `DNS:yiyan.overpass.top`，或包含 `DNS:*.overpass.top`。
+输出中应包含 `DNS:exmaple.com`，或包含 `DNS:*.exmaple.com`。
 
 ### 4.3 测试
 
@@ -420,11 +437,20 @@ sudo systemctl reload nginx
 # Nginx 是否同时监听 IPv4 / IPv6
 sudo ss -lntp | grep -E ':(80|443)\b'
 
+# IPv4 与 IPv6 分别请求
+curl -4 -I https://exmaple.com/healthz
+curl -6 -I https://exmaple.com/healthz
+curl -4 -fsS https://exmaple.com/hitokoto.json | head -c 300
+curl -6 -fsS https://exmaple.com/hitokoto.json | head -c 300
+curl -4 -fsS https://exmaple.com/Custom.xaml | head -n 20
+curl -6 -fsS https://exmaple.com/Custom.xaml | head -n 20
+```
+
 如果其中一族的 `curl` 失败：
 
 - 先看 `getent ahostsv4` / `ahostsv6` 是否有记录；
 - 再看 `ip -brief addr` 是否有对应公网地址；
-- 只有 IPv6 的机器（如 xf1）需要前置 IPv4 代理 / 隧道，不能只靠本机 Nginx 提供 IPv4。
+- 只有 IPv6 的机器需要前置 IPv4 代理 / 隧道，不能只靠本机 Nginx 提供 IPv4。
 
 如果 502，检查应用是否真的在 13469 上监听：
 
@@ -439,9 +465,9 @@ sudo systemctl status hitokoto --no-pager
 
 | PCL 位置 | 填写内容 |
 | --- | --- |
-| “主页” → 联网下载 / 更新链接 | `https://yiyan.overpass.top/Custom.xaml` |
-| “API 设置” → 自定义 API | `https://yiyan.overpass.top/api/hitokoto` |
-| “句库下载” → 句库地址 | `https://yiyan.overpass.top/hitokoto.json` |
+| “主页” → 联网下载 / 更新链接 | `https://exmaple.com/Custom.xaml` |
+| “API 设置” → 自定义 API | `https://exmaple.com/api/hitokoto` |
+| “句库下载” → 句库地址 | `https://exmaple.com/hitokoto.json` |
 
 更新链接只填单个 `Custom.xaml`；PCL 会自动请求 `Custom.xaml.ini` 检查版本，不需要另填版本地址。
 
@@ -476,7 +502,7 @@ sudo systemctl restart hitokoto
 ```bash
 export HITOKOTO_ADMIN_TOKEN='你的长随机Token'
 
-curl -fsS -X POST https://yiyan.overpass.top/api/quotes \
+curl -fsS -X POST https://exmaple.com/api/quotes \
   -H "Authorization: Bearer $HITOKOTO_ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
@@ -490,7 +516,7 @@ curl -fsS -X POST https://yiyan.overpass.top/api/quotes \
 也支持 `X-Admin-Token` 头：
 
 ```bash
-curl -fsS -X POST https://yiyan.overpass.top/api/quotes \
+curl -fsS -X POST https://exmaple.com/api/quotes \
   -H "X-Admin-Token: $HITOKOTO_ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"text":"另一条示例。","source":"网络","author":"","type":"其他"}'
@@ -501,7 +527,7 @@ curl -fsS -X POST https://yiyan.overpass.top/api/quotes \
 请求体是数组，单次最多 500 条：
 
 ```bash
-curl -fsS -X POST https://yiyan.overpass.top/api/quotes/bulk \
+curl -fsS -X POST https://exmaple.com/api/quotes/bulk \
   -H "Authorization: Bearer $HITOKOTO_ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '[
@@ -543,7 +569,7 @@ sudo ufw status verbose
 
 如果 Nginx 在容器/另一台机器里，才需要把 `HITOKOTO_HOST` 改成 `0.0.0.0`（仅 IPv4）或 `::`（IPv4 + IPv6 通配），并配置防火墙。`::` 会让应用直接监听所有 IPv6 地址，**不推荐**在没有防火墙的情况下使用。
 
-只有 IPv6 的服务器（例如 xf1）无法仅靠本机提供公网 IPv4；需要前置 IPv4 代理、CDN 或隧道。
+只有 IPv6 的服务器无法仅靠本机提供公网 IPv4；需要前置 IPv4 代理、CDN 或隧道。
 
 ---
 
@@ -575,7 +601,7 @@ sudo ss -lntp | grep 13469
 - 查看 Nginx 错误日志：
 
 ```bash
-sudo tail -n 50 /var/log/nginx/yiyan.overpass.top.error.log
+sudo tail -n 50 /var/log/nginx/exmaple.com.error.log
 ```
 
 ### 8.3 Nginx 配置不生效
@@ -589,7 +615,7 @@ include /etc/nginx/conf.d/*.conf;
 检查最终配置：
 
 ```bash
-sudo nginx -T | grep -n "yiyan.overpass.top\|13469"
+sudo nginx -T | grep -n "exmaple.com\|13469"
 ```
 
 ### 8.4 POST 返回 503 / 401
@@ -600,7 +626,7 @@ sudo nginx -T | grep -n "yiyan.overpass.top\|13469"
 ### 8.5 `nginx -t` 报 `key values mismatch`
 
 ```text
-SSL_CTX_use_PrivateKey("/mnt/ssl/overpass.top/privkey.pem") failed
+SSL_CTX_use_PrivateKey("/mnt/ssl/exmaple.com/privkey.pem") failed
 (SSL: error:05800074:x509 certificate routines::key values mismatch)
 ```
 
@@ -608,27 +634,27 @@ SSL_CTX_use_PrivateKey("/mnt/ssl/overpass.top/privkey.pem") failed
 
 ```bash
 # 只比较公钥指纹，不输出私钥内容
-openssl x509 -in /mnt/ssl/overpass.top/fullchain.pem -pubkey -noout \
+openssl x509 -in /mnt/ssl/exmaple.com/fullchain.pem -pubkey -noout \
   | openssl pkey -pubin -outform der | sha256sum
-openssl pkey -in /mnt/ssl/overpass.top/privkey.pem -pubout -outform der \
+openssl pkey -in /mnt/ssl/exmaple.com/privkey.pem -pubout -outform der \
   | sha256sum
 ```
 
 两个 SHA-256 必须一致。不一致时：
 
 - 找回与当前证书匹配的私钥；或
-- 用 Certbot / acme.sh 重新签发 `*.overpass.top`（DNS-01），让 `fullchain.pem` 和 `privkey.pem` 成对更新；然后：
+- 用 Certbot / acme.sh 重新签发 `*.exmaple.com`（DNS-01），让 `fullchain.pem` 和 `privkey.pem` 成对更新；然后：
 
 ```bash
 sudo nginx -t && sudo systemctl restart nginx
 ```
 
-证书问题和 DNS 解析问题是两个独立问题：证书修好后，还要确认 `yiyan.overpass.top` 的 A/AAAA 记录指向这台机器。
+证书问题和 DNS 解析问题是两个独立问题：证书修好后，还要确认 `exmaple.com` 的 A/AAAA 记录指向这台机器。
 
 ### 8.6 句库为空或没有更新
 
 ```bash
-curl -fsS https://yiyan.overpass.top/hitokoto.json | python3 -m json.tool | head -n 20
+curl -fsS https://exmaple.com/hitokoto.json | python3 -m json.tool | head -n 20
 ```
 
 检查 `data/quotes.json` 是否有 `quotes` 数组；服务启动时会把数组或 `quotes/data/results/items` 包装统一读入内存。
@@ -657,7 +683,7 @@ data/SOURCE.json             来源、版本、分类计数
 data/LICENSE-AGPL-3.0.txt    上游 AGPL-3.0 许可证
 data/README.md               句库来源与转换说明
 tools/import_sentences_bundle.py  官方句库重新导入脚本
-nginx/yiyan.overpass.top.conf      Nginx 配置
+nginx/exmaple.com.conf      Nginx 配置
 systemd/hitokoto.service     systemd 单元（可选）
 README.md                    本文件
 ```

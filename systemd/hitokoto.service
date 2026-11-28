@@ -1,5 +1,5 @@
 [Unit]
-Description=Hitokoto library HTTP service for PCL (yiyan.overpass.top)
+Description=Hitokoto library HTTP service for PCL (exmaple.com)
 Documentation=file:/opt/hitokoto-server/README.md
 After=network-online.target
 Wants=network-online.target

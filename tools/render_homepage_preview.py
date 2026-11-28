@@ -22,7 +22,7 @@ import homepage  # noqa: E402
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--index", type=int, default=0, help="quote index in data/quotes.json")
-    parser.add_argument("--base-url", default="https://yiyan.overpass.top")
+    parser.add_argument("--base-url", default="https://exmaple.com")
     parser.add_argument(
         "--output",
         type=Path,

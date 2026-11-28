@@ -89,14 +89,14 @@ if LOG_LEVEL not in {"critical", "error", "warning", "info", "debug", "trace"}:
 
 ADMIN_TOKEN = os.getenv("HITOKOTO_ADMIN_TOKEN", "").strip()
 HOME_BASE_URL = (
-    os.getenv("HITOKOTO_PUBLIC_BASE_URL", "https://yiyan.overpass.top").strip()
-    or "https://yiyan.overpass.top"
+    os.getenv("HITOKOTO_PUBLIC_BASE_URL", "https://exmaple.com").strip()
+    or "https://exmaple.com"
 ).rstrip("/")
 
 # Hosts that may render their own origin into the generated search action.
 # The canonical domain and the current origin hostname are both accepted so
 # the page can be tested before the DNS CNAME is switched.
-_RENDER_HOSTS = frozenset({"yiyan.overpass.top", "xa-1.overpass.top"})
+_RENDER_HOSTS = frozenset({"exmaple.com"})
 
 
 def _request_base_url(request: Request) -> str:
